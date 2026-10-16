@@ -335,6 +335,12 @@ static void safe_main(void)
             fm1_delay_ms(30);
             fm1_reboot();
         }
+        {   /* the log readout works here too: what crashed is the question safe mode raises */
+            const uint8_t *p;
+            uint32_t n;
+            if (ota_frame_get(&p, &n) && log_frame(p, n))
+                ota_frame_done();
+        }
         ota_service();
         if (usb.ota_req) {
             usb.ota_req = 0;
