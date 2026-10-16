@@ -449,9 +449,6 @@ def main():
         raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
     PRODUCT = prefix + "00"
     name = NAME + ".fwsc"
-    if a.host or a.web:
-        generate()
-        return build_host() if a.host else build_web()
     if a.release:
         # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
         # model the update tools match on; the digits after the underscore are the firmware's.
@@ -459,8 +456,11 @@ def main():
         if not m:
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
-        VERSION = a.release.upper() if "BETA" in a.release.upper() else a.release.upper() + " BETA"
+        VERSION = a.release.upper()
         name = f"{NAME}-{a.release}.fwsc"
+    if a.host or a.web:
+        generate()
+        return build_host() if a.host else build_web()
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
