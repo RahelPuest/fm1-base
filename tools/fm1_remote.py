@@ -14,9 +14,15 @@ or by a program (an agent). Needs mido with python-rtmidi.
     screen                                  what is on the screen, in words (the screen reader's channel)
     log                                     the last crash and Bluetooth's log (both survive a restart)
     release-all                             every button and key up, MASTER the pot's own
+    wifi on | wifi off | wifi scan          WiFi (a firmware with wifi = true): on, off, look for networks
+    wifi status | wifi found | wifi saved   its state, network, address and signal; the networks the scan found;
+                                            the networks kept
+    wifi join SSID [PASSWORD]               join a network (kept once joined); no password: a kept one's, or none
+    wifi forget N                           forget the network kept at N (0 = the most recent)
   e.g.  tools/fm1_remote.py tap REC wait 800 screen
 
-The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...) and log_frame (F0 7D 4C 47), and the screen
+The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...), log_frame (F0 7D 4C 47), wifi_frame
+(F0 7D 4C 57), and the screen
 reader's protocol (fm1-reader PROTOCOL.md: F0 7D 53 52)."""
 import sys
 import time
@@ -25,7 +31,12 @@ import mido
 
 BTN = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"]
 ENC = ["SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"]
-LC, LG, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x53, 0x52]
+LC, LG, LW, SR = [0x7D, 0x4C, 0x43], [0x7D, 0x4C, 0x47], [0x7D, 0x4C, 0x57], [0x7D, 0x53, 0x52]
+WIFI_OP = {"on": 1, "off": 2, "scan": 3, "status": 4, "saved": 5, "forget": 6, "join": 7, "found": 8}
+
+
+def nibbles(text):
+    return [v for byte in text.encode() for v in (byte >> 4, byte & 15)]
 
 
 class FM1:
@@ -132,6 +143,22 @@ class FM1:
                     if f != b"end":
                         print("log:", f.decode("latin1", "replace"))
                 i += 1
+            elif c == "wifi":
+                op = WIFI_OP.get(a)
+                if op is None:
+                    raise SystemExit(f"wifi {a!r}: on, off, scan, status, found, saved, join, forget")
+                data, used = [], 2
+                if a == "forget":
+                    data, used = [int(b)], 3
+                elif a == "join":
+                    pw = args[i + 3] if i + 3 < len(args) and args[i + 3] not in ("wait", "wifi", "log", "screen") else None
+                    data = nibbles(b) + ([0, 0] + nibbles(pw) if pw is not None else [])
+                    used = 4 if pw is not None else 3
+                self.sysex(LW + [op] + data)
+                for f in self.frames(LW, 3.0, until=lambda f: f[:1] == b"\x11"):
+                    if f[:1] == b"\x10":
+                        print("wifi:", f[1:].decode("latin1", "replace"))
+                i += used
             elif c == "release-all":
                 self.btn = self.keys = 0
                 self.buttons()
