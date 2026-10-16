@@ -10,25 +10,33 @@
  * Script, one command per line (# comments):
  *   wait MS                      run the device for MS milliseconds
  *   press BTN | release BTN | tap BTN     (BTN: FX SEL ENV LFO EDIT GLO HOME SAVE ARP SEQ PLAY REC OCT- OCT+)
- *   key K down|up | tapkey K     (K: 0..26 = F3..G5, or w0..w15 white keys, b0..b10 black keys)
+ *   key K down|up [VEL [PRESS]] | tapkey K [VEL]   (K: 0..26 = F3..G5, or w0..w15 white keys, b0..b10 black keys;
+ *                                with APP_KEY_SENSE, the key lands at VEL 1..127, default 100, and is pressed PRESS
+ *                                0..100 % more: the app's app_host_key makes the readings)
  *   strum A B [MS]               white keys A..B pressed in turn (down then up), MS apart (default 25)
  *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4; N detents, MS apart, default 80)
  *   spin ENC N                   N detents at once, exactly N (no acceleration)
  *   master N                     MASTER pot 0..4096
- *   midi B0 B1 B2                incoming USB MIDI message (hex bytes)
+ *   midi [PORT] B0 B1 B2         incoming MIDI message (PORT: USB, the default, BLE or TRS; hex bytes)
+ *   ble connect | ble disconnect a central (FM1B_BLE: the stand-in stack is ready a second after the start)
  *   wav FILE | wavstop           start / stop recording the output
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
  *   shot FILE.png                save the screen
  *   leds                         print the lit buttons and keys
+ *   out                          print the MIDI sent since the last "out" (and forget it; clocks not shown)
+ *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out"
  *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound
  *   reboot                       re-run boot from the simulated flash (persistence test)
  *   listen                       a screen reader starts listening (HELLO, again every 2 s): each SAY is printed
  *                                ("said: ..."; "said!:" cuts off what was being said)
  *   where                        the reader asks for everything on the screen
  *   said TEXT                    some SAY since the last "said" (or "listen") has TEXT in it: else a failure
+ *   unsaid TEXT                  no SAY since the last "said" has TEXT in it: else a failure
  *   speakdump                    every page, value and message as the reader gets them (the app's app_speak_dump)
- * The app may add its own checks for expect (app_expect), the speakdump (app_speak_dump) and what a reboot forgets
- * (app_host_reboot): app.h defines APP_HOST_EXPECT / APP_HOST_SPEAKDUMP / APP_HOST_REBOOT when it has them.
+ * The app may add its own checks for expect (app_expect), the speakdump (app_speak_dump), what a reboot forgets
+ * (app_host_reboot) and commands (app_host_cmd: 1 = handled): app.h defines APP_HOST_EXPECT / APP_HOST_SPEAKDUMP /
+ * APP_HOST_REBOOT / APP_HOST_CMD when it has them. With APP_KEY_SENSE, app_host_key(k, vel, press) (vel 0 = up)
+ * makes the readings a key gives, from app_host_tick (every millisecond) while plat_sense is on.
  * FM1B_SAID_LOG=FILE: a reader listens from boot, quietly, and every SAY is appended to FILE (the audit).
  */
 #define PLAT_HOST 1
@@ -113,26 +121,68 @@ uint32_t plat_analog_mask(void) { return 0xFFFFFu; }    /* the keys on rows PA7 
 static uint32_t min_q[MQ], mi_w, mi_r;
 static FILE *midi_log;
 static uint32_t midi_out_count, clock_out_count;
-int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi": USB */
+static uint32_t min_port[MQ];
+static uint32_t out_pkt[4096], out_to[4096], n_out;   /* what went out since the script's last "out" */
+static int ble_state, ble_conn;
+int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" */
 {
     if (mi_r == mi_w)
         return 0;
-    *pkt = min_q[mi_r++ % MQ];
     if (port)
-        *port = PORT_USB;
+        *port = (int)min_port[mi_r % MQ];
+    *pkt = min_q[mi_r++ % MQ];
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
 {
-    if (!(to & TO_USB))                 /* Bluetooth: not simulated */
+    to &= TO_USB | TO_BLE;
+    if ((to & TO_BLE) && !ble_conn)     /* as the device: nothing queues for a central not there */
+        to &= ~TO_BLE;
+    if (!to)
         return;
     midi_out_count++;
+    if (n_out < 4096) {
+        out_pkt[n_out] = pkt;
+        out_to[n_out++] = to;
+    }
     if (((pkt >> 8) & 0xFF) == 0xF8) {
         clock_out_count++;
         return;
     }
     if (midi_log)
-        fprintf(midi_log, "%u ms: %02X %02X %02X\n", now_ms, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF, (pkt >> 24) & 0xFF);
+        fprintf(midi_log, "%u ms: %02X %02X %02X ->%s%s\n", now_ms, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF,
+                (pkt >> 24) & 0xFF, to & TO_USB ? " USB" : "", to & TO_BLE ? " BLE" : "");
+}
+
+/* Bluetooth (FM1B_BLE): a stand-in for the stack, ready a second after the start, and its log */
+static uint32_t ble_t0;
+static char ble_log[8][40];
+static uint32_t ble_log_n;
+static void ble_say(const char *s) { snprintf(ble_log[ble_log_n++ % 8], 40, "%s", s); }
+int plat_ble_state(void) { return ble_state; }
+int plat_ble_connected(void) { return ble_conn; }
+void plat_ble_start(void)
+{
+    if (ble_state != BLE_OFF || !FM1B_BLE)
+        return;
+    ble_state = BLE_STARTING;
+    ble_t0 = now_ms;
+    ble_log_n = 0;
+    ble_say("BT: starting");
+}
+static void ble_tick(void)
+{
+    if (ble_state == BLE_STARTING && now_ms - ble_t0 >= 1000u) {
+        ble_state = BLE_READY;
+        ble_say("BT init ok: starting BLE");
+    }
+}
+uint32_t plat_ble_log_total(void) { return ble_log_n; }
+const char *plat_ble_log_line(int back)
+{
+    if (back < 0 || (uint32_t)back >= ble_log_n || back >= 8)
+        return "";
+    return ble_log[(ble_log_n - 1u - (uint32_t)back) % 8];
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 
@@ -351,6 +401,9 @@ static void boot(void)
     palette_set(APP_PALETTE);                       /* as the device does at boot */
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
+    ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
+    ble_conn = 0;
+    plat_ble_start();
 #ifdef APP_BOOT
     app_boot();
 #endif
@@ -363,6 +416,11 @@ static void run_ms(uint32_t ms)
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
         now_ms++;
+        ble_tick();
+#if defined APP_KEY_SENSE
+        if (sense_on)
+            app_host_tick();                        /* the keys' readings, as the scan hands them over */
+#endif
 #ifdef APP_TICK
         app_tick();                                 /* 1 kHz, as the device's timer runs it */
 #endif
@@ -431,6 +489,27 @@ static int key_of(const char *s)
     return atoi(s);
 }
 
+static uint32_t mk_pkt(const char *a, const char *b, const char *c)
+{
+    uint32_t st = (uint32_t)strtoul(a, 0, 16), d1 = b[0] ? (uint32_t)strtoul(b, 0, 16) : 0,
+             d2 = c[0] ? (uint32_t)strtoul(c, 0, 16) : 0;
+    uint32_t cin = st >= 0xF0 ? 0x0F : st >> 4;
+    return cin | st << 8 | d1 << 16 | d2 << 24;
+}
+static const char *const PORT_N[NPORTS] = {"USB", "BLE", "TRS"};
+static int expect_out(const char *port, uint32_t pkt)   /* this message went out to PORT since the last "out" */
+{
+    int p = find_name(PORT_N, NPORTS, port);
+    uint32_t i;
+    for (i = 0; p >= 0 && i < n_out; i++)
+        if (((out_pkt[i] ^ pkt) & 0xFFFFFF00u) == 0 && (out_to[i] >> p & 1u)) {
+            printf("  ok out %02X %02X %02X -> %s\n", (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF, pkt >> 24, port);
+            return 0;
+        }
+    printf("FAIL expect_out %s %02X %02X %02X: not sent\n", port, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF, pkt >> 24);
+    return 1;
+}
+
 static int expect(const char *what, const char *val)
 {
     int got;
@@ -440,6 +519,8 @@ static int expect(const char *what, const char *val)
         got = (int)clock_out_count;
     else if (!strcmp(what, "midi_out"))
         got = (int)midi_out_count;
+    else if (!strcmp(what, "ble"))
+        got = ble_state;
 #ifdef APP_HOST_EXPECT
     else if (app_expect(what, &got))              /* the app's own state (app.h) */
         ;
@@ -499,10 +580,14 @@ int main(int argc, char **argv)
         ann_frame(HELLO, sizeof HELLO, now_ms);
     }
     while (fgets(line, sizeof line, sc)) {
-        char cmd[32] = {0}, a[256] = {0}, b[64] = {0}, c[64] = {0};
+        char cmd[32] = {0}, a[256] = {0}, b[64] = {0}, c[64] = {0}, d[64] = {0};
         lineno++;
-        if (line[0] == '#' || sscanf(line, "%31s %255s %63s %63s", cmd, a, b, c) < 1)
+        if (line[0] == '#' || sscanf(line, "%31s %255s %63s %63s %63s", cmd, a, b, c, d) < 1)
             continue;
+#ifdef APP_HOST_CMD
+        if (app_host_cmd(cmd, a, b, c, d))          /* the app's own commands (app.h) */
+            continue;
+#endif
         if (!strcmp(cmd, "wait"))
             run_ms((uint32_t)atoi(a));
         else if (!strcmp(cmd, "press") || !strcmp(cmd, "release") || !strcmp(cmd, "tap")) {
@@ -520,16 +605,25 @@ int main(int argc, char **argv)
             run_ms(cmd[0] == 't' ? 40 : 2);
         } else if (!strcmp(cmd, "key") || !strcmp(cmd, "tapkey")) {
             int k = key_of(a);
-            if (cmd[0] == 't') {
+            int down = cmd[0] == 't' || !strcmp(b, "down");
+            uint32_t vel = (uint32_t)atoi(cmd[0] == 't' ? b : c), press = (uint32_t)atoi(cmd[0] == 't' ? "" : d);
+            (void)vel;
+            (void)press;
+#ifdef APP_KEY_SENSE
+            app_host_key((uint32_t)k, down ? (vel ? vel : 100u) : 0u, press);   /* the readings it gives (app.h) */
+#endif
+            if (down)
                 held_keys |= 1u << k;
+            else
+                held_keys &= ~(1u << k);
+            if (cmd[0] == 't') {
                 run_ms(60);
+#ifdef APP_KEY_SENSE
+                app_host_key((uint32_t)k, 0, 0);
+#endif
                 held_keys &= ~(1u << k);
                 run_ms(30);
             } else {
-                if (!strcmp(b, "down"))
-                    held_keys |= 1u << k;
-                else
-                    held_keys &= ~(1u << k);
                 run_ms(2);
             }
         } else if (!strcmp(cmd, "strum")) {          /* strum A B [MS]: a finger across the white keys */
@@ -566,9 +660,31 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "master"))
             master = (uint32_t)atoi(a);
         else if (!strcmp(cmd, "midi")) {
-            uint32_t s = (uint32_t)strtoul(a, 0, 16), d1 = (uint32_t)strtoul(b, 0, 16), d2 = (uint32_t)strtoul(c, 0, 16);
-            uint32_t cin = s >= 0xF0 ? 0x0F : s >> 4;
-            min_q[mi_w++ % MQ] = cin | s << 8 | d1 << 16 | d2 << 24;
+            int p = find_name(PORT_N, NPORTS, a);
+            min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d);
+            min_port[mi_w++ % MQ] = p < 0 ? PORT_USB : (uint32_t)p;
+            run_ms(2);
+        } else if (!strcmp(cmd, "ble")) {
+            if (!strcmp(a, "connect") && ble_state == BLE_READY) {
+                ble_conn = 1;
+                ble_say("connected");
+            } else if (!strcmp(a, "disconnect")) {
+                ble_conn = 0;
+                ble_say("disconnected: reason 13");
+            } else {
+                printf("line %d: ble %s: the stack is not ready\n", lineno, a);
+                fails++;
+            }
+            run_ms(2);
+        } else if (!strcmp(cmd, "out")) {
+            uint32_t i;
+            for (i = 0; i < n_out; i++)
+                if (((out_pkt[i] >> 8) & 0xFF) != 0xF8)
+                    printf("  out %02X %02X %02X ->%s%s\n", (out_pkt[i] >> 8) & 0xFF, (out_pkt[i] >> 16) & 0xFF,
+                           out_pkt[i] >> 24, out_to[i] & TO_USB ? " USB" : "", out_to[i] & TO_BLE ? " BLE" : "");
+            n_out = 0;
+        } else if (!strcmp(cmd, "expect_out")) {
+            fails += expect_out(a, mk_pkt(b, c, d));
         } else if (!strcmp(cmd, "wav")) {
             snprintf(out, sizeof out, "%s/%s", dir, a);
             wav_open(out);
@@ -616,19 +732,20 @@ int main(int argc, char **argv)
             static const uint8_t WHERE[] = {ANN_H0, ANN_H1, ANN_H2, ANN_WHERE};
             ann_frame(WHERE, sizeof WHERE, now_ms);
             run_ms(40);
-        } else if (!strcmp(cmd, "said")) {
-            char *t = line + 4, *e;
+        } else if (!strcmp(cmd, "said") || !strcmp(cmd, "unsaid")) {
+            int un = cmd[0] == 'u';
+            char *t = line + strlen(cmd), *e;
             while (*t == ' ')
                 t++;
             e = t + strlen(t);
             while (e > t && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' '))
                 *--e = 0;
-            if (!strstr(said_log, t)) {
-                printf("FAIL line %d: said \"%s\": not said (since the last check: %s)\n", lineno, t,
-                       said_len ? said_log : "nothing\n");
+            if ((strstr(said_log, t) == 0) != un) {
+                printf("FAIL line %d: %s \"%s\" (since the last check: %s)\n", lineno, un ? "said, not wanted" : "not said",
+                       t, said_len ? said_log : "nothing\n");
                 fails++;
             } else {
-                printf("  ok said \"%s\"\n", t);
+                printf("  ok %s \"%s\"\n", cmd, t);
             }
             said_len = 0;
             said_log[0] = 0;
