@@ -7,7 +7,25 @@
 #include "shim.h"
 
 /* ---- the platform the shim asks for */
-uint32_t shim_ms(void) { return fm1_uptime_ms(); }   /* TIMER4: independent of the timer-5 tick */
+/* milliseconds since boot, from TIMER4 (independent of the timer-5 tick). TIMER4 wraps every 2^32 / 24 MHz = 179 s,
+ * and the stack's timers and our timeouts must not see time jump back: its deltas are summed (called far more often
+ * than every 179 s; fm1-radio's) */
+uint32_t shim_irq_save(void);
+void shim_irq_restore(uint32_t f);
+uint32_t shim_ms(void)
+{
+    static uint32_t last, acc, ms;
+    uint32_t f = shim_irq_save(), now = fm1_ticks(), r;     /* nests: called inside the shim's critical sections */
+    acc += now - last;
+    last = now;
+    if (acc >= 1000u * FM1_TICKS_PER_US) {
+        ms += acc / (1000u * FM1_TICKS_PER_US);
+        acc %= 1000u * FM1_TICKS_PER_US;
+    }
+    r = ms;
+    shim_irq_restore(f);
+    return r;
+}
 
 static volatile uint32_t shim_depth;
 uint32_t shim_off_max, shim_off_from;            /* the longest the stack kept interrupts off (us), and from where
@@ -371,7 +389,7 @@ static volatile uint8_t ble_quiet;
 static void ble_irqs_back(const char *why)
 {
     uint32_t f;
-    if (ble_quiet && fm1_uptime_ms() - ble_t0 > 1000u) {
+    if (ble_quiet && shim_ms() - ble_t0 > 1000u) {
         ble_quiet = 0;
         shim_log(ble_state == BLE_READY ? "sound back: BT ready" : "sound back: 15 s, not ready");
     }
@@ -387,7 +405,7 @@ extern void shim_os_dump(void);
 static void ble_stuck_check(void)                 /* still starting after 3 s: say what each task waits for */
 {
     static uint32_t said;
-    if (ble_state == BLE_STARTING && fm1_uptime_ms() - ble_t0 > 3000u && said != ble_t0) {
+    if (ble_state == BLE_STARTING && shim_ms() - ble_t0 > 3000u && said != ble_t0) {
         said = ble_t0;
         shim_log("still starting after 3 s:");
         shim_os_dump();
@@ -407,7 +425,8 @@ static void ble_start(void)
     blog.magic = BLE_LOG_MAGIC;
     blog.crash_seen = fm1_crash.count;
     blog.running = 1;
-    ble_t0 = blog.t0_up = fm1_uptime_ms();
+    blog.t0_up = fm1_uptime_ms();                 /* (the crash note's clock) */
+    ble_t0 = shim_ms();
     shim_log("BT: starting");
     ble_quiet = 1;
 #if BLE_MASK_AT_START
@@ -452,12 +471,12 @@ static void ble_poll(void)
     ble_stuck_check();
     if (ble_state == BLE_READY)
         ble_irqs_back("irqs back: BT ready");
-    else if (fm1_uptime_ms() - ble_t0 > 15000u)
+    else if (shim_ms() - ble_t0 > 15000u)
         ble_irqs_back("irqs back: 15 s, not ready");
     {   /* ten seconds after it is ready, once: the tasks' deepest stack so far (sizing; 8 KiB each) */
         static uint8_t said;
         extern int shim_stack_depth(int task);
-        if (ble_state == BLE_READY && !said && fm1_uptime_ms() - ble_t0 > 10000u) {
+        if (ble_state == BLE_READY && !said && shim_ms() - ble_t0 > 10000u) {
             char b[40] = "stacks ", *q = b + 7;
             int k;
             said = 1;
