@@ -46,3 +46,15 @@ said TEMPLATE. OCTAVE +1. WAVE TRIANGLE
 tap REC
 wait 30
 said BUTTON REC
+# MASTER turned while a note plays: the gain glides, so no sample jumps further than the wave itself does
+midi 90 45 64
+wait 100
+wav master.wav
+master 4096
+wait 20
+master 300
+wait 20
+master 4096
+wait 50
+wavstop
+midi 80 45 00

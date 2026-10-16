@@ -26,7 +26,7 @@ static const char *const ENC_NAME[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2",
 /* ------------------------------------------------------------------ voice --- */
 /* one voice, the last note wins; the main loop and MIDI in set it, the audio interrupt plays it */
 static volatile int32_t voice_note = -1;     /* MIDI note, -1 = released */
-static float voice_phase, voice_level;
+static float voice_phase, voice_level, gain_now;   /* gain_now glides to MASTER: no step at a block's edge */
 
 static void note_on(int32_t note) { voice_note = note; }
 static void note_off(int32_t note)
@@ -53,16 +53,17 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
     int32_t note = voice_note;
     float target = note >= 0 ? 0.25f : 0.0f;
     float inc = note >= 0 ? 440.0f * fm_exp2f((float)(note - 69) / 12.0f) / 44100.0f : 0.0f;
-    float gain = (float)master_q12 / 4096.0f * 8300000.0f;
+    float gain = (float)master_q12 / 4096.0f * 8300000.0f;   /* MASTER, read once a block */
     midi_in();
     for (i = 0; i < n; i++) {
         float s;
         voice_level += (target - voice_level) * 0.002f;          /* ~10 ms attack and release */
+        gain_now += (gain - gain_now) * 0.004f;                  /* ~5 ms: turning MASTER does not click */
         voice_phase += inc;
         if (voice_phase >= 1.0f)
             voice_phase -= 1.0f;
         s = set.wave ? 4.0f * fm_fabsf(voice_phase - 0.5f) - 1.0f : fm_sinf(voice_phase * 6.2831853f);
-        s *= voice_level * gain;
+        s *= voice_level * gain_now;
         lr[2 * i] = (int32_t)s;
         lr[2 * i + 1] = (int32_t)s;
     }
