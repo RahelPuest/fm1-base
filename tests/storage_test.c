@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Host test of firmware/src/storage.c against a simulated NOR flash:
+/* Host test of device/storage.c against a simulated NOR flash:
  * erase -> 0xFF, program can only clear bits, page writes must not wrap. */
 #include <stdint.h>
 #include <stdio.h>
@@ -29,9 +29,11 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
         nor[off + i] &= s[i];
     return 0;
 }
-#include "../firmware/src/app/plat.h"     /* OMNI: the object map */
-#include "../firmware/src/storage.c"
-#define OBJ_PROJECT0 OBJ_PROJ                  /* OMNI has two objects: the project and the panel */
+#include "../include/plat.h"
+enum { OBJ_PROJ, OBJ_PANEL, OBJ_NOBJ };       /* an app's object map (app.h): the template's two objects */
+#define APP_STORE_MAP {0xFC000u, 0xDC000u}
+#include "../device/storage.c"
+#define OBJ_PROJECT0 OBJ_PROJ
 #define OBJ_SETTINGS OBJ_PANEL
 
 static int check(const char *what, int ok)
@@ -91,7 +93,7 @@ int main(void)
     nor[st_sector(OBJ_PANEL, 0) + 8] ^= 0x01;    /* both headers broken */
     nor[st_sector(OBJ_PANEL, 1) + 8] ^= 0x01;
     bad += check("both headers broken -> nothing", st_load(OBJ_PANEL, got, sizeof got) < 0);
-    {   /* OMNI map: every object in a data region, none in the sample slots (0xA0000..0xDBFFF), no overlaps */
+    {   /* the map: every object in a data region, none in the sample slots (0xA0000..0xDBFFF), no overlaps */
         uint32_t o, p, ok = 1;
         for (o = 0; o < OBJ_NOBJ; o++) {
             uint32_t a0 = st_sector(o, 0), a1 = st_sector(o, 1) + 4096;

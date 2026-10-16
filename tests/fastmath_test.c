@@ -3,7 +3,7 @@
 /* fastmath.h against libm over each function's documented range. */
 #include <math.h>
 #include <stdio.h>
-#include "../../firmware/src/dsp/fastmath.h"
+#include "../include/fastmath.h"
 
 static int fails;
 static void check(const char *name, double err, double bound)

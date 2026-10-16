@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Host test of the Felucca update loader (firmware/loader/ldr_core.c): a fake
+/* Host test of the Felucca update loader (bsp/loader/ldr_core.c): a fake
  * host serves a package over the SysEx protocol, the "device" flash starts as
  * another package's flash.bin (as if that firmware were installed).
  *   ldr_test OLD.fwsc NEW.fwsc */
@@ -76,7 +76,7 @@ static int ota_prog(uint32_t off, const void *p, uint32_t n) { (void)off; (void)
 static int ota_fread(uint32_t off, void *p, uint32_t n) { memcpy(p, nor + off, n); return 0; }
 static void ota_show(uint32_t step, int32_t code) { (void)step; (void)code; }
 static void ota_commit(const uint8_t *parm) { (void)parm; }
-#include "../firmware/src/ota.c"
+#include "../bsp/chip/ota.c"
 
 static int ldr_fread(uint32_t off, void *p, uint32_t n) { memcpy(p, nor + off, n); return 0; }
 static int ldr_erase(uint32_t off)
@@ -97,7 +97,7 @@ static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 }
 static void ldr_record_clear(void) { record_cleared++; }
 static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; }
-#include "../firmware/loader/ldr_core.c"
+#include "../bsp/loader/ldr_core.c"
 
 static uint8_t *load_logical(const char *path, size_t *len)
 {
