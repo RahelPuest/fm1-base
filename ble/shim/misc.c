@@ -49,7 +49,10 @@ char *strcpy(char *d, const char *s)
 
 /* a first-fit heap with a size word before each block and a free list */
 #define HEAP_BYTES (24u * 1024u)
-static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
+/* in .bss, low in RAM, not the pool: the radio's buffers come from here, and the hardware does not reach the pool's
+ * top (a CTL-1 with two links, its heap at 0x01C4F028, had stacks overwritten 0.55 s into every Bluetooth start, in
+ * the radio's calibration; at 0x01C121F0 it starts cleanly) */
+static uint32_t heap[HEAP_BYTES / 4u];
 typedef struct blk { uint32_t size; struct blk *next; } blk_t;   /* size in bytes, header included */
 static blk_t *free_list;
 static int heap_ready;
