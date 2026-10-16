@@ -35,7 +35,8 @@ FONTSETS = {
                ("S", "BarlowSemiCondensed-Medium.ttf", 15, 1, False, 32, 126),
                ("B", "BarlowSemiCondensed-Bold.ttf", 15, 1, False, 32, 126),
                ("M", "BarlowSemiCondensed-SemiBold.ttf", 23, 1, False, 32, 95),
-               ("L", "BarlowSemiCondensed-Bold.ttf", 31, 1, False, 32, 126)],
+               ("L", "BarlowSemiCondensed-Bold.ttf", 31, 1, False, 32, 95)],    # capitals and digits, as the others
+                                                                                  # (the splash, the panel: 14 KB less)
     "inter": [("T", "Inter[opsz,wght].ttf@wght=600", 9, 1, False, 32, 95),
               ("XS", "Inter[opsz,wght].ttf@wght=600", 11, 1, False, 32, 126),
               ("S", "Inter[opsz,wght].ttf@wght=500", 14, 1, False, 32, 126),
