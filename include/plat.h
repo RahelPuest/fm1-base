@@ -68,6 +68,18 @@ int plat_ble_connected(void);          /* a central is connected and listening *
 void plat_ble_start(void);
 uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
 const char *plat_ble_log_line(int back);   /* 0 = the newest */
+/* Bluetooth MIDI devices (fm1.toml ble_central = true: FM1B_BLE_CENTRAL 1): the FM-1 connects to one (a keyboard,
+ * a controller), beside a computer connected to it. Its MIDI comes in as PORT_BLE too, and TO_BLE goes to both.
+ * Scanning finds the devices that advertise the MIDI service (up to 8); connecting stops the scan. */
+#ifndef FM1B_BLE_CENTRAL
+#define FM1B_BLE_CENTRAL 0
+#endif
+enum { BLE_DEV_OFF, BLE_DEV_SCANNING, BLE_DEV_CONNECTING, BLE_DEV_SEARCHING, BLE_DEV_READY };
+void plat_ble_scan(int on);
+int plat_ble_found(int i, char *name, int *rssi);   /* device i of the scan (name: 21 bytes); 0 = none */
+int plat_ble_connect(int i);           /* 0 = connecting */
+void plat_ble_disconnect(void);
+int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI both ways */
 
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share (it nests) */

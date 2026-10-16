@@ -128,7 +128,7 @@ static FILE *midi_log;
 static uint32_t midi_out_count, clock_out_count;
 static uint32_t min_port[MQ];
 static uint32_t out_pkt[4096], out_to[4096], n_out;   /* what went out since the script's last "out" */
-static int ble_state, ble_conn;
+static int ble_state, ble_conn, bdev_state;   /* bdev_state: the Bluetooth MIDI device (BLE_DEV_*) */
 int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" */
 {
     if (mi_r == mi_w)
@@ -141,7 +141,7 @@ int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" */
 void plat_midi_send(uint32_t pkt, uint32_t to)
 {
     to &= TO_USB | TO_BLE;
-    if ((to & TO_BLE) && !ble_conn)     /* as the device: nothing queues for a central not there */
+    if ((to & TO_BLE) && !ble_conn && bdev_state != BLE_DEV_READY)   /* as the device: nothing queues for no one */
         to &= ~TO_BLE;
     if (!to)
         return;
@@ -175,13 +175,56 @@ void plat_ble_start(void)
     ble_log_n = 0;
     ble_say("BT: starting");
 }
+/* Bluetooth MIDI devices (FM1B_BLE_CENTRAL): one stand-in, "BLE MIDI", found half a second into a scan;
+ * connecting takes 0.3 s; "ble device off" takes it away */
+static uint32_t bdev_t;
 static void ble_tick(void)
 {
     if (ble_state == BLE_STARTING && now_ms - ble_t0 >= 1000u) {
         ble_state = BLE_READY;
         ble_say("BT init ok: starting BLE");
     }
+    if (bdev_state == BLE_DEV_CONNECTING && now_ms - bdev_t >= 300u) {
+        bdev_state = BLE_DEV_READY;
+        ble_say("central: MIDI ready");
+    }
 }
+void plat_ble_scan(int on)
+{
+    if (!FM1B_BLE_CENTRAL || ble_state != BLE_READY)
+        return;
+    if (on && bdev_state == BLE_DEV_OFF) {
+        bdev_state = BLE_DEV_SCANNING;
+        bdev_t = now_ms;
+    } else if (!on && bdev_state == BLE_DEV_SCANNING) {
+        bdev_state = BLE_DEV_OFF;
+    }
+}
+int plat_ble_found(int i, char *name, int *rssi)
+{
+    if (bdev_state != BLE_DEV_SCANNING || i != 0 || now_ms - bdev_t < 500u)
+        return 0;
+    if (name)
+        snprintf(name, 21, "BLE MIDI");
+    if (rssi)
+        *rssi = -50;
+    return 1;
+}
+int plat_ble_connect(int i)
+{
+    if (!plat_ble_found(i, 0, 0))
+        return -1;
+    bdev_state = BLE_DEV_CONNECTING;
+    bdev_t = now_ms;
+    return 0;
+}
+void plat_ble_disconnect(void)
+{
+    if (bdev_state == BLE_DEV_READY)
+        ble_say("central: disconnected");
+    bdev_state = BLE_DEV_OFF;
+}
+int plat_ble_device(void) { return bdev_state; }
 uint32_t plat_ble_log_total(void) { return ble_log_n; }
 const char *plat_ble_log_line(int back)
 {
@@ -411,6 +454,7 @@ static void boot(void)
     lcd_fill(0, 0, 240, 240, 0);
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
     ble_conn = 0;
+    bdev_state = BLE_DEV_OFF;
     plat_ble_start();
 #ifdef APP_BOOT
     app_boot();

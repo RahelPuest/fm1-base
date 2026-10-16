@@ -18,3 +18,8 @@ int plat_ble_connected(void) { return 0; }
 void plat_ble_start(void) {}
 const char *plat_ble_log_line(int back) { (void)back; return ""; }
 uint32_t plat_ble_log_total(void) { return 0; }
+void plat_ble_scan(int on) { (void)on; }
+int plat_ble_found(int i, char *name, int *rssi) { (void)i, (void)name, (void)rssi; return 0; }
+int plat_ble_connect(int i) { (void)i; return -1; }
+void plat_ble_disconnect(void) {}
+int plat_ble_device(void) { return BLE_DEV_OFF; }

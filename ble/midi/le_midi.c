@@ -15,7 +15,17 @@
  *                                 the millisecond it happened, to the central, as many as fit one
  *                                 notification; returns how many went; from the main loop (the stack's context)
  *   ble_midi_receive(pkt)         the firmware's: every MIDI message written by the central
- *   ble_midi_connected()          a central is connected and listens (CCC on) */
+ *   ble_midi_connected()          a central is connected and listens (CCC on), or (BLE_MIDI_CENTRAL) a MIDI
+ *                                 device we connected to is ready
+ *
+ * BLE_MIDI_CENTRAL (fm1.toml ble_central = true): the FM-1 is a central too, at the same time: it scans for
+ * MIDI devices (the service in their advertising), connects to the one asked for, finds its MIDI
+ * characteristic and subscribes to it; what it notifies arrives as ble_midi_receive, and ble_midi_send_many
+ * writes to it as well. The stack then runs both roles (ble_stack_gatt_role 2, the SDK's multi-link calls,
+ * one link each: TRANS_MULTI_BLE_EN in its config), after the SDK's apps/common/ble/multi_demo
+ * (le_multi_common.c, le_multi_client.c), Copyright (c) JIELI, Apache-2.0.
+ *   ble_midi_scan(on)  ble_midi_found(i, name, rssi)  ble_midi_connect(i)  ble_midi_disconnect()
+ *   ble_midi_central_state()      BLE_MC_* below */
 #include "system/app_core.h"
 #include "system/includes.h"
 #include "app_config.h"
@@ -32,6 +42,9 @@
 #include "debug.h"
 const char log_tag_const_i_BLE_MIDI = 1;           /* the SDK keeps these in log_config; ours here */
 
+#ifndef BLE_MIDI_CENTRAL
+#define BLE_MIDI_CENTRAL 0
+#endif
 extern void ble_midi_receive(uint32_t pkt);
 extern uint32_t shim_ms(void);
 
@@ -60,11 +73,22 @@ static const uint8_t profile_data[] = {
 
 #define ADV_INTERVAL_MIN     (160)              /* 0.625 ms units: 100 ms (the SDK demo: 500 ms) */
 #define ATT_LOCAL_MTU_SIZE   (64)
-#define ATT_SEND_CBUF_SIZE   (512)
+#define ATT_SEND_CBUF_SIZE   (512 * (1 + BLE_MIDI_CENTRAL))   /* both links share it with the central */
 #define ATT_RAM_BUFSIZE      (ATT_CTRL_BLOCK_SIZE + ATT_LOCAL_MTU_SIZE + ATT_SEND_CBUF_SIZE)
 static u8 att_ram_buffer[ATT_RAM_BUFSIZE] __attribute__((aligned(4)));
 
 static const char gap_device_name[] = "FM-1";
+#if BLE_MIDI_CENTRAL
+#define ROLE_SERVER 0                            /* the SDK's MULTI_ROLE_SLAVE / MASTER */
+#define ROLE_CLIENT 1
+#define SEND(h, att, d, n, op) ble_op_multi_att_send_data((h), (att), (d), (n), (op))
+#define CCC_GET(h, att) multi_att_get_ccc_config((h), (att))
+#define CCC_SET(h, att, v) multi_att_set_ccc_config((h), (att), (v))
+#else
+#define SEND(h, att, d, n, op) ble_op_att_send_data((att), (d), (n), (op))
+#define CCC_GET(h, att) att_get_ccc_config(att)
+#define CCC_SET(h, att, v) att_set_ccc_config((att), (v))
+#endif
 static volatile hci_con_handle_t con_handle;
 static u8 adv_data[ADV_RSP_PACKET_MAX], scan_rsp_data[ADV_RSP_PACKET_MAX];
 static u8 ble_work_state, adv_ctrl_en;
@@ -168,7 +192,17 @@ static void midi_parse(const u8 *b, u16 len)
 }
 
 /* ---- MIDI out: as many messages as fit one packet (header, then timestamp + message each) */
-int ble_midi_connected(void) { return con_handle && att_get_ccc_config(H_CCC); }
+#if BLE_MIDI_CENTRAL
+static volatile hci_con_handle_t mc_handle;      /* the device we connected to */
+static u16 mc_value;                             /* its MIDI characteristic's value handle (0: not found yet) */
+static volatile u8 mc_state;
+static int mc_ready(void) { return mc_handle && mc_value && mc_state == 4; }
+#else
+static int mc_ready(void) { return 0; }
+#endif
+static int periph_ready(void) { return con_handle && CCC_GET(con_handle, H_CCC); }
+int ble_midi_connected(void) { return periph_ready() || mc_ready(); }
+int ble_midi_peripheral_connected(void) { return periph_ready(); }
 static u16 send_mtu = 20;                        /* ATT payload: 23 - 3 until the exchange says more */
 int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
 {
@@ -185,7 +219,18 @@ int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
     /* one notification in the stack at a time: the radio sends about one a connection interval, so
      * what piles up meanwhile goes together in the next one (with its own timestamps) instead of as a
      * queue of small ones that each wait for a slot */
+#if BLE_MIDI_CENTRAL
+    {   /* both links take it or neither (each has its own buffer in the multi-link stack) */
+        u32 r1 = 0xFFFFFFFFu, r2 = 0xFFFFFFFFu;
+        if (periph_ready())
+            ble_op_multi_att_get_remain(con_handle, &r1);
+        if (mc_ready())
+            ble_op_multi_att_get_remain(mc_handle, &r2);
+        remain = r1 < r2 ? r1 : r2;
+    }
+#else
     ble_op_att_get_remain(&remain);
+#endif
     if (remain > remain_max)
         remain_max = remain;
     if (remain < remain_max || remain < 8u)
@@ -227,8 +272,12 @@ int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
     }
     if (i == 0)
         return 0;
-    if (ble_op_att_send_data(H_MIDI, buf, len, ATT_OP_AUTO_READ_CCC))
+    if (periph_ready() && SEND(con_handle, H_MIDI, buf, len, ATT_OP_AUTO_READ_CCC))
         return 0;
+#if BLE_MIDI_CENTRAL
+    if (mc_ready())
+        SEND(mc_handle, mc_value, buf, len, ATT_OP_WRITE_WITHOUT_RESPOND);
+#endif
     return i;
 }
 
@@ -251,7 +300,7 @@ static uint16_t att_read_callback(hci_con_handle_t connection_handle, uint16_t a
         break;
     case H_CCC:
         if (buffer) {
-            buffer[0] = att_get_ccc_config(att_handle);
+            buffer[0] = (uint8_t)CCC_GET(connection_handle, att_handle);
             buffer[1] = 0;
         }
         len = 2;
@@ -266,7 +315,7 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         set_ble_work_state(BLE_ST_NOTIFY_IDICATE);
         check_connetion_updata_deal();
         log_info("ccc %02x\n", buffer[0]);
-        att_set_ccc_config(att_handle, buffer[0]);
+        CCC_SET(connection_handle, att_handle, buffer[0]);
         break;
     case H_MIDI:
         if (buffer_size >= 2)
@@ -275,6 +324,218 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
     }
     return 0;
 }
+
+#if BLE_MIDI_CENTRAL
+/* ---- the central: MIDI devices around, one connected (after the SDK's le_multi_client.c) */
+enum { BLE_MC_OFF, BLE_MC_SCANNING, BLE_MC_CONNECTING, BLE_MC_SEARCHING, BLE_MC_READY };   /* mc_state */
+#define MC_MAX 8
+typedef struct { char name[21]; u8 addr[6], addr_type; s8 rssi; } mc_dev_t;
+static mc_dev_t mc_dev[MC_MAX];
+static volatile u8 mc_n;
+static u8 search_ram_buffer[512] __attribute__((aligned(4)));
+static struct create_conn_param_t mc_conn;
+static const u8 midi_svc_le[16] = {MIDI_SVC_UUID}, midi_chr_le[16] = {MIDI_CHR_UUID};
+
+static int uuid_is(const u8 *u, const u8 *le)    /* a 128-bit uuid as the stack reports it, either order */
+{
+    int i, fwd = 1, rev = 1;
+    for (i = 0; i < 16; i++) {
+        fwd &= u[i] == le[i];
+        rev &= u[i] == le[15 - i];
+    }
+    return fwd || rev;
+}
+
+/* an advertising report: a device advertising the MIDI service goes in the list (its name from this report or
+ * its scan response; the strongest reading kept) */
+static void mc_adv(const adv_report_t *r)
+{
+    const u8 *d = r->data;
+    u8 len = r->length, i = 0, midi = 0, nl = 0, k;
+    const u8 *name = 0;
+    while (i + 1u < len) {
+        u8 l = d[i], t = d[i + 1];
+        if (!l || i + 1u + l > len)
+            break;
+        if ((t == 0x06 || t == 0x07) && l >= 17)                 /* 128-bit service uuids */
+            for (k = 0; k + 16u <= (u8)(l - 1); k += 16)
+                midi |= (u8)uuid_is(&d[i + 2 + k], midi_svc_le);
+        if (t == 0x08 || t == 0x09) {                            /* the name */
+            name = &d[i + 2];
+            nl = (u8)(l - 1);
+        }
+        i = (u8)(i + 1 + l);
+    }
+    for (k = 0; k < mc_n; k++)
+        if (!memcmp(mc_dev[k].addr, r->address, 6))
+            break;
+    if (k == mc_n) {
+        if (!midi || mc_n >= MC_MAX)
+            return;                                              /* (a scan response alone does not add one) */
+        memset(&mc_dev[k], 0, sizeof mc_dev[k]);
+        memcpy(mc_dev[k].addr, r->address, 6);
+        mc_dev[k].addr_type = r->address_type;
+        mc_dev[k].rssi = r->rssi;
+        mc_n++;
+    }
+    if (name) {
+        if (nl > 20)
+            nl = 20;
+        memcpy(mc_dev[k].name, name, nl);
+        mc_dev[k].name[nl] = 0;
+    }
+    if (r->rssi > mc_dev[k].rssi)
+        mc_dev[k].rssi = r->rssi;
+}
+
+void ble_midi_scan(int on)                       /* main loop: start (the list starts empty) or stop scanning */
+{
+    if (on && mc_state == BLE_MC_OFF) {
+        mc_n = 0;
+        ble_op_set_scan_param(SCAN_ACTIVE, 48, 24);              /* 30 ms interval, 15 ms window (0.625 ms) */
+        ble_op_scan_enable2(1, 0);
+        mc_state = BLE_MC_SCANNING;
+    } else if (!on && mc_state == BLE_MC_SCANNING) {
+        ble_op_scan_enable2(0, 0);
+        mc_state = BLE_MC_OFF;
+    }
+}
+int ble_midi_found(int i, char *name, int *rssi)   /* device i of the scan: 0 when there is none */
+{
+    if (i < 0 || i >= mc_n)
+        return 0;
+    if (name) {
+        memcpy(name, mc_dev[i].name[0] ? mc_dev[i].name : "MIDI device", 21);
+        name[20] = 0;
+    }
+    if (rssi)
+        *rssi = mc_dev[i].rssi;
+    return 1;
+}
+int ble_midi_connect(int i)                      /* connect to device i of the scan */
+{
+    if (i < 0 || i >= mc_n || mc_handle || (mc_state != BLE_MC_SCANNING && mc_state != BLE_MC_OFF))
+        return -1;
+    if (mc_state == BLE_MC_SCANNING)
+        ble_op_scan_enable2(0, 0);
+    mc_conn.conn_interval = 12;                  /* 15 ms (1.25 ms units): MIDI's latency */
+    mc_conn.conn_latency = 0;
+    mc_conn.supervision_timeout = 400;           /* 4 s */
+    mc_conn.peer_address_type = mc_dev[i].addr_type;
+    memcpy(mc_conn.peer_address, mc_dev[i].addr, 6);
+    mc_state = BLE_MC_CONNECTING;
+    ble_op_create_connection(&mc_conn);
+    return 0;
+}
+void ble_midi_disconnect(void)
+{
+    if (mc_handle)
+        ble_op_disconnect(mc_handle);
+    else if (mc_state == BLE_MC_CONNECTING) {
+        ble_op_create_connection_cancel();
+        mc_state = BLE_MC_OFF;
+    }
+}
+int ble_midi_central_state(void) { return mc_state; }
+
+/* the stack's search: each service and characteristic as found, then (void *)-1 at the end */
+void user_client_report_search_result(search_result_t *r)
+{
+    if (r == (void *)-1) {
+        if (mc_value) {                          /* notifications on: its CCC is the descriptor after the value */
+            static u16 on = 1;
+            SEND(mc_handle, mc_value + 1, (u8 *)&on, 2, ATT_OP_WRITE);
+            mc_state = BLE_MC_READY;
+            printf("central: MIDI ready\n");
+        } else {
+            printf("central: no MIDI characteristic\n");
+            ble_op_disconnect(mc_handle);
+        }
+        return;
+    }
+    if (!r->characteristic.uuid16 && uuid_is(r->characteristic.uuid128, midi_chr_le))
+        mc_value = r->characteristic.value_handle;
+}
+void user_client_report_descriptor_result(charact_descriptor_t *d) { (void)d; }
+void user_client_report_data_callback(att_data_report_t *d)   /* notifications from the device */
+{
+    if (d->conn_handle == mc_handle && d->value_handle == mc_value && d->packet_type == GATT_EVENT_NOTIFICATION &&
+        d->blob_length >= 2)
+        midi_parse(d->blob, d->blob_length);
+}
+int l2cap_connection_update_request_just(u8 *packet, hci_con_handle_t handle) { (void)packet; (void)handle; return 0; }
+
+static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    if (packet_type != HCI_EVENT_PACKET)
+        return;
+    switch (hci_event_packet_get_type(packet)) {
+    case GAP_EVENT_ADVERTISING_REPORT:
+        if (mc_state == BLE_MC_SCANNING)
+            mc_adv((const adv_report_t *)&packet[2]);
+        break;
+    case HCI_EVENT_LE_META:
+        switch (hci_event_le_meta_get_subevent_code(packet)) {
+        case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+            if (hci_subevent_le_connection_complete_get_role(packet))
+                break;                           /* a central connected to us: the server's */
+            if (packet[3]) {
+                printf("central: connect failed %x\n", packet[3]);
+                mc_state = BLE_MC_OFF;
+                break;
+            }
+            mc_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+            mc_value = 0;
+            printf("central: connected %x\n", mc_handle);
+            ble_op_multi_att_send_conn_handle(mc_handle, 0, ROLE_CLIENT);
+            user_client_init(mc_handle, search_ram_buffer, sizeof search_ram_buffer);
+            mc_state = BLE_MC_SEARCHING;
+            ble_op_search_profile_all();
+            break;
+        }
+        break;
+    case HCI_EVENT_DISCONNECTION_COMPLETE:
+        if (little_endian_read_16(packet, 3) != mc_handle)
+            break;
+        printf("central: disconnected %x\n", packet[5]);
+        ble_op_multi_att_send_conn_handle(0, 0, ROLE_CLIENT);
+        mc_handle = 0;
+        mc_value = 0;
+        mc_state = BLE_MC_OFF;
+        break;
+    case ATT_EVENT_MTU_EXCHANGE_COMPLETE:
+        if (little_endian_read_16(packet, 2) == mc_handle)
+            ble_op_multi_att_set_send_mtu(mc_handle, att_event_mtu_exchange_complete_get_MTU(packet) - 3);
+        break;
+    }
+}
+
+/* one HCI handler for both roles: each event to the role it belongs to (le_multi_common.c's way) */
+static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+static void both_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    int to_server = 1, to_client = 1;
+    if (packet_type == HCI_EVENT_PACKET) {
+        switch (hci_event_packet_get_type(packet)) {
+        case GAP_EVENT_ADVERTISING_REPORT:
+            to_server = 0;
+            break;
+        case HCI_EVENT_LE_META:
+            if (hci_event_le_meta_get_subevent_code(packet) == HCI_SUBEVENT_LE_CONNECTION_COMPLETE ||
+                hci_event_le_meta_get_subevent_code(packet) == HCI_SUBEVENT_LE_ENHANCED_CONNECTION_COMPLETE) {
+                int slave = hci_subevent_le_connection_complete_get_role(packet);
+                to_server = slave;
+                to_client = !slave;
+            }
+            break;
+        }
+    }
+    if (to_server)
+        cbk_packet_handler(packet_type, channel, packet, size);
+    if (to_client)
+        client_packet_handler(packet_type, channel, packet, size);
+}
+#endif
 
 /* ---- advertising */
 static int make_set_adv_data(void)
@@ -306,7 +567,7 @@ static void advertisements_setup_init(void)
 static int set_adv_enable(void *priv, u32 en)
 {
     ble_state_e next_state = en ? BLE_ST_ADV : BLE_ST_IDLE, cur_state;
-    if ((!adv_ctrl_en && en) || con_handle)
+    if ((!adv_ctrl_en && en) || (en && con_handle))
         return APP_BLE_OPERATION_ERROR;
     cur_state = get_ble_work_state();
     switch (cur_state) {
@@ -329,7 +590,11 @@ static void bt_ble_adv_enable(u8 enable) { set_adv_enable(0, enable); }
 /* ---- the stack's events */
 static void server_profile_start(u16 handle)
 {
+#if BLE_MIDI_CENTRAL
+    ble_op_multi_att_send_conn_handle(handle, 0, ROLE_SERVER);
+#else
     ble_op_att_send_init(handle, att_ram_buffer, ATT_RAM_BUFSIZE, ATT_LOCAL_MTU_SIZE);
+#endif
     set_ble_work_state(BLE_ST_CONNECT);
 }
 static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
@@ -345,6 +610,8 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
     case HCI_EVENT_LE_META:
         switch (hci_event_le_meta_get_subevent_code(packet)) {
         case HCI_SUBEVENT_LE_ENHANCED_CONNECTION_COMPLETE:
+            if (BLE_MIDI_CENTRAL && !hci_subevent_le_enhanced_connection_complete_get_role(packet))
+                break;                           /* we are the central on this one */
             status = hci_subevent_le_enhanced_connection_complete_get_status(packet);
             if (status) {
                 log_info("connection fail %x\n", status);
@@ -356,20 +623,33 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
             server_profile_start(con_handle);
             break;
         case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+            if (BLE_MIDI_CENTRAL && !hci_subevent_le_connection_complete_get_role(packet))
+                break;                           /* we are the central on this one */
+            if (packet[3])
+                break;                           /* failed */
             con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
             printf("connected %x\n", con_handle);
             connection_update_complete_success(packet + 8);
             server_profile_start(con_handle);
             break;
         case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
-            connection_update_complete_success(packet);
+            if (little_endian_read_16(packet, 4) == con_handle)
+                connection_update_complete_success(packet);
             break;
         }
         break;
     case HCI_EVENT_DISCONNECTION_COMPLETE:
+        if (little_endian_read_16(packet, 3) != con_handle)
+            break;
         printf("disconnected: reason %x\n", packet[5]);
+#if BLE_MIDI_CENTRAL
+        multi_att_clear_ccc_config(con_handle);
+        ble_op_multi_att_send_conn_handle(0, 0, ROLE_SERVER);
+        con_handle = 0;
+#else
         con_handle = 0;
         ble_op_att_send_init(con_handle, 0, 0, 0);
+#endif
         set_ble_work_state(BLE_ST_DISCONN);
         os_mutex_pend(&mutex, 0);
         bt_ble_adv_enable(1);
@@ -377,12 +657,20 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
         connection_update_cnt = 0;
         break;
     case ATT_EVENT_MTU_EXCHANGE_COMPLETE:
+        if (little_endian_read_16(packet, 2) != con_handle)
+            break;
         mtu = att_event_mtu_exchange_complete_get_MTU(packet) - 3;
         log_info("ATT MTU = %u\n", mtu);
+#if BLE_MIDI_CENTRAL
+        ble_op_multi_att_set_send_mtu(con_handle, mtu);
+#else
         ble_op_att_set_send_mtu(mtu);
+#endif
         send_mtu = (u16)(mtu > 64 ? 64 : mtu);
         break;
     case L2CAP_EVENT_CONNECTION_PARAMETER_UPDATE_RESPONSE:
+        if (little_endian_read_16(packet, 2) != con_handle)
+            break;
         tmp = little_endian_read_16(packet, 4);
         printf("conn param %d: %s\n", connection_update_cnt, tmp ? "refused" : "accepted");   /* on the log */
         if (tmp) {
@@ -424,11 +712,23 @@ void ble_profile_init(void)
     sm_set_encryption_key_size_range(7, 16);
     sm_set_request_security(0);                  /* MIDI needs no pairing; a central may still ask */
     sm_event_callback_set(&cbk_sm_packet_handler);
+#if BLE_MIDI_CENTRAL
+    ble_stack_gatt_role(2);                      /* server and client */
+#endif
     att_server_init(profile_data, att_read_callback, att_write_callback);
     att_server_register_packet_handler(cbk_packet_handler);
+#if BLE_MIDI_CENTRAL
+    gatt_client_init();
+    gatt_client_register_packet_handler(client_packet_handler);
+    hci_event_callback_set(&both_packet_handler);
+    le_l2cap_register_packet_handler(&both_packet_handler);
+    ble_vendor_set_default_att_mtu(ATT_LOCAL_MTU_SIZE);
+    ble_op_multi_att_send_init(att_ram_buffer, ATT_RAM_BUFSIZE, ATT_LOCAL_MTU_SIZE);
+#else
     hci_event_callback_set(&cbk_packet_handler);
     le_l2cap_register_packet_handler(&cbk_packet_handler);
     ble_vendor_set_default_att_mtu(ATT_LOCAL_MTU_SIZE);
+#endif
 }
 
 void bt_ble_init(void)

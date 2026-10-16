@@ -421,8 +421,35 @@ static void ble_poll(void)
 }
 
 /* ---- plat.h */
+extern int ble_midi_peripheral_connected(void);
 int plat_ble_state(void) { return ble_state; }
-int plat_ble_connected(void) { return ble_conn; }
+int plat_ble_connected(void) { return ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+#if FM1B_BLE_CENTRAL
+extern void ble_midi_scan(int on);
+extern int ble_midi_found(int i, char *name, int *rssi);
+extern int ble_midi_connect(int i);
+extern void ble_midi_disconnect(void);
+extern int ble_midi_central_state(void);
+void plat_ble_scan(int on)
+{
+    if (ble_state == BLE_READY)
+        ble_midi_scan(on);
+}
+int plat_ble_found(int i, char *name, int *rssi) { return ble_state == BLE_READY && ble_midi_found(i, name, rssi); }
+int plat_ble_connect(int i) { return ble_state == BLE_READY ? ble_midi_connect(i) : -1; }
+void plat_ble_disconnect(void)
+{
+    if (ble_state == BLE_READY)
+        ble_midi_disconnect();
+}
+int plat_ble_device(void) { return ble_state == BLE_READY ? ble_midi_central_state() : BLE_DEV_OFF; }
+#else
+void plat_ble_scan(int on) { (void)on; }
+int plat_ble_found(int i, char *name, int *rssi) { (void)i, (void)name, (void)rssi; return 0; }
+int plat_ble_connect(int i) { (void)i; return -1; }
+void plat_ble_disconnect(void) {}
+int plat_ble_device(void) { return BLE_DEV_OFF; }
+#endif
 void plat_ble_start(void) { ble_start(); }
 const char *plat_ble_log_line(int back)
 {
