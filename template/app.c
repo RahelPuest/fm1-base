@@ -40,11 +40,18 @@ static void note_off(int32_t note)
         voice_note = -1;
 }
 
+static volatile uint32_t midi_last, midi_last_port, midi_count;   /* the last message in (shown), and how many */
 static void midi_in(void)                    /* audio interrupt: the packets that came in */
 {
     uint32_t pkt;
-    while (plat_midi_in(&pkt, 0)) {
+    int port;
+    while (plat_midi_in(&pkt, &port)) {
         uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = pkt >> 24;
+        if (st != 0xF8u && st != 0xFEu) {    /* (clock and active sensing would flood the screen) */
+            midi_last = pkt;
+            midi_last_port = (uint32_t)port;
+            midi_count++;
+        }
         if ((st & 0xF0u) == 0x90u && d2)
             note_on((int32_t)d1, d2);
         else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u)
@@ -102,6 +109,7 @@ static struct {
     uint32_t keys, btn;                  /* held at the last input */
     uint8_t vel[NKEYS], prs[NKEYS];      /* each key's last velocity, and its pressure while held */
     int32_t last_key;                    /* the key pressed last: its numbers in the header */
+    int32_t pick;                        /* Bluetooth MIDI devices: the one ALGORITHM picks while scanning */
     int32_t turns[NE];                   /* detents since boot, per encoder */
     uint32_t turned_at[NE];              /* when each was last turned: it shows lit for a moment */
     uint8_t redraw;
@@ -200,6 +208,36 @@ static void octave_step(int32_t d)
     app_say("OCTAVE", t);
 }
 
+/* REC: a Bluetooth MIDI device (FM1B_BLE_CENTRAL): scan, then connect to the one ALGORITHM picks, then let it go */
+static void ble_device_say(void)
+{
+    char name[21];
+    if (plat_ble_found((int)ui.pick, name, 0))
+        app_say("DEVICE", name);
+    else
+        app_say("BLE", "SCANNING");
+}
+static void ble_device_button(void)
+{
+    int d = plat_ble_device();
+    if (d == BLE_DEV_OFF) {
+        ui.pick = 0;
+        plat_ble_scan(1);
+        app_say("BLE", "SCANNING");
+    } else if (d == BLE_DEV_SCANNING) {
+        char name[21];
+        if (plat_ble_found((int)ui.pick, name, 0) && plat_ble_connect((int)ui.pick) == 0) {
+            app_say("CONNECTING", name);
+        } else {
+            plat_ble_scan(0);
+            app_say("BLE", "NO DEVICE");
+        }
+    } else {
+        plat_ble_disconnect();
+        app_say("BLE", "DISCONNECTED");
+    }
+}
+
 static void input(void)
 {
     uint32_t keys, btn = plat_buttons(), k;
@@ -234,6 +272,8 @@ static void input(void)
             octave_step(-1);
         else if (k == B_OCTUP)
             octave_step(1);
+        else if (k == B_REC && FM1B_BLE_CENTRAL)
+            ble_device_button();
         else if (k == B_SAVE) {
             if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0) {
                 set_dirty = 0;
@@ -252,7 +292,10 @@ static void input(void)
         ui.turns[k] += e;
         ui.turned_at[k] = plat_ms();
         ui.redraw = 1;
-        if (k == EN_PRESET) {
+        if (k == EN_ALGO && FM1B_BLE_CENTRAL && plat_ble_device() == BLE_DEV_SCANNING) {
+            ui.pick = clamp(ui.pick + e, 0, 7);
+            ble_device_say();
+        } else if (k == EN_PRESET) {
             set.wave ^= 1u;
             set_dirty = 1;
             app_say("WAVE", WAVE_NAME[set.wave]);
@@ -304,7 +347,9 @@ static void draw(void)
     } else {
         int32_t x = cv_text(10, 6, &FONT_B, APP_NAME, C_WHITE);
         if (FM1B_BLE)                        /* Bluetooth: grey while it waits, lit while a computer is connected */
-            cv_text(x + 8, 10, &FONT_XS, "BLE", plat_ble_connected() ? C_HI : C_DIM);
+            x = cv_text(x + 8, 10, &FONT_XS, "BLE", plat_ble_connected() ? C_HI : C_DIM);
+        if (FM1B_BLE_CENTRAL)                /* a Bluetooth MIDI device: lit while connected */
+            cv_text(x + 6, 10, &FONT_XS, "DEV", plat_ble_device() == BLE_DEV_READY ? C_HI : C_DIM);
         if (note >= 0) {                     /* the note, and the last key's velocity and pressure */
             int32_t x;
             note_name(note, t);
@@ -347,6 +392,21 @@ static void draw(void)
     cv_text(30, 36, &FONT_XS, t, C_HI);
     cv_text(64, 36, &FONT_XS, "PRESET", C_GRAY);
     cv_text(112, 36, &FONT_XS, WAVE_NAME[set.wave], C_HI);
+    if (midi_count) {                        /* the last MIDI message in, and where from */
+        static const char *const PORT[NPORTS] = {"USB", "BLE", "TRS"};
+        static const char HEX[] = "0123456789ABCDEF";
+        uint32_t m = midi_last, b;
+        char h[12];
+        for (b = 0; b < 3u; b++) {
+            uint32_t v = (m >> (8u + 8u * b)) & 0xFFu;
+            h[3 * b] = HEX[v >> 4];
+            h[3 * b + 1] = HEX[v & 15u];
+            h[3 * b + 2] = b < 2u ? ' ' : 0;
+        }
+        cv_text(4, 48, &FONT_XS, "MIDI IN", C_GRAY);
+        cv_text(52, 48, &FONT_XS, midi_last_port < NPORTS ? PORT[midi_last_port] : "", C_HI);
+        cv_text(82, 48, &FONT_XS, h, C_WHITE);
+    }
     cv_text(178, 36, &FONT_XS, "VOL", C_GRAY);
     int_text((int32_t)pct, t);
     text_cat(t, "%");
@@ -363,7 +423,7 @@ void app_ui_init(void)
 
 void app_frame(void)
 {
-    static uint32_t last_pct, lit_until, last_ble;
+    static uint32_t last_pct, lit_until, last_ble, last_midi;
     uint32_t i, now = plat_ms(), pct = plat_master() * 100u / 4096u;
     input();
     speak();
@@ -374,9 +434,18 @@ void app_frame(void)
         lit_until = 0;
         ui.redraw = 1;
     }
-    if (pct != last_pct || (uint32_t)plat_ble_connected() != last_ble || (ui.msg_until && now >= ui.msg_until)) {
+    if (midi_count != last_midi) {
+        last_midi = midi_count;
+        ui.redraw = 1;
+    }
+    if (pct != last_pct || (uint32_t)(plat_ble_connected() | plat_ble_device() << 1) != last_ble ||
+        (ui.msg_until && now >= ui.msg_until)) {
+        static int said_ready;
         last_pct = pct;
-        last_ble = (uint32_t)plat_ble_connected();
+        last_ble = (uint32_t)(plat_ble_connected() | plat_ble_device() << 1);
+        if (plat_ble_device() == BLE_DEV_READY && !said_ready)
+            app_say("DEVICE", "CONNECTED");
+        said_ready = plat_ble_device() == BLE_DEV_READY;
         if (now >= ui.msg_until)
             ui.msg_until = 0;
         ui.redraw = 1;

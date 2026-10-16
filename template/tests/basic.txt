@@ -43,9 +43,9 @@ midi 80 3C 00
 listen
 wait 100
 said TEMPLATE. OCTAVE +1. WAVE TRIANGLE
-tap REC
+tap ARP
 wait 30
-said BUTTON REC
+said BUTTON ARP
 # MASTER turned while a note plays: the gain glides, so no sample jumps further than the wave itself does
 midi 90 45 64
 wait 100
