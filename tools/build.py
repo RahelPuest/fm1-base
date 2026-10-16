@@ -306,7 +306,7 @@ def ble_units():
 
 
 def build_app():
-    flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN,
+    flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", SRC / "lib", APP, GEN,
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
     if BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
@@ -454,7 +454,7 @@ def mmio_check():
         regs |= more
     errors = []
     skip = CONF.get("mmio_skip", [])
-    files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"),
+    files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"), *(SRC / "lib").glob("*.[ch]"),
              *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts]]
     for f in sorted(files):
         for no, ln in enumerate(strip(f.read_text()).splitlines(), 1):
@@ -480,7 +480,7 @@ def build_host():
     exe = out / (STEM + "_host")                  # NAME_host; NAME-usb_host with --no-ble
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE,
-           *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
+           *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
@@ -498,7 +498,7 @@ def build_web():
     emu.mkdir(parents=True, exist_ok=True)
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
            "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
-           *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
+           *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
     r = subprocess.run(cmd, capture_output=True, text=True)

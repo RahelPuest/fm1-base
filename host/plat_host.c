@@ -75,6 +75,9 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 /* ---------------------------------------------------------- platform --- */
 #include "plat.h"
 #include "app.h"
+#ifdef APP_TOUCH
+#include "touch.h"                     /* velocity and pressure from the keys (lib/touch.c) */
+#endif
 #include "fm1b_config.h"
 static const uint8_t HOST_WHITE_K[16] = PLAT_WHITE_KEYS, HOST_BLACK_K[11] = PLAT_BLACK_KEYS;
 /* "spin": encoder steps exactly as given; an app that accelerates its knobs reads this (#ifdef PLAT_HOST) */
@@ -265,6 +268,9 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
     }
     return 0;
 }
+#ifdef APP_TOUCH
+#include "touch.c"
+#endif
 #include "app.c"
 
 /* ---------------------------------------------------------- outputs --- */

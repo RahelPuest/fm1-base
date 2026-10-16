@@ -17,10 +17,14 @@
  *   FM1B_UAC 0              USB audio input (the master output, recordable over the cable): off until
  *                           felucca-bsp's usb.c is checked at this block size on a device
  *   FM1B_TRS 1              MIDI in on the TRS jack
+ *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
+#ifdef APP_TOUCH
+#include "touch.h"                /* velocity and pressure from the keys (lib/touch.c) */
+#endif
 #ifdef APP_KEY_SENSE              /* the keys' readings (plat_sense) to the app, by key: 0..26 */
 #define FM1_KEY_OF(col, rowbit) ((uint32_t)FM1_KEYMAP[rowbit][col] - 14u)
 #define FM1_INPUT_ANALOG(col, rowbit, v, driven) \
@@ -139,8 +143,10 @@ static void ota_show(uint32_t step, int32_t code)
     draw_text_box(0, 124, 240, &FONT_S, code == 1 ? "DRY RUN OK" : "FAILED", C_HI, 1);
     fm1_delay_ms(1500);
 }
+static void ble_clean_exit(void);
 static void ota_commit(const uint8_t *parm)
 {
+    ble_clean_exit();                                   /* an update, not a crash: Bluetooth starts again after it */
     bootguard.pending = 0;                              /* intentional reset */
     bootguard.failed = 0;                               /* a new install starts with a clean slate */
     usb_detach();
@@ -165,5 +171,8 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
 #include "ble_none.c"             /* the build without Bluetooth: nothing of JieLi's linked */
 #endif
 #include "plat_fm1.c"
+#ifdef APP_TOUCH
+#include "touch.c"
+#endif
 #include "app.c"
 #include "main_fm1.c"
