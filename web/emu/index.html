@@ -62,14 +62,17 @@ a { color: var(--accent); }
 #alert { color: var(--bad); font-weight: 600; flex-basis: 100%; }
 #alert:empty { display: none; }
 .speak { margin: 1.4rem 0 0; padding: 1rem 1.2rem; background: var(--card); border: 1px solid var(--rule); border-radius: 14px; }
-.speak h2 { font: 600 1.1rem "Barlow Semi Condensed", "Barlow", sans-serif; margin: 0 0 .5rem; }
+.speak summary { cursor: pointer; }
+.speak summary h2 { display: inline; font: 600 1.1rem "Barlow Semi Condensed", "Barlow", sans-serif; margin: 0; }
+.speak[open] summary { margin: 0 0 .6rem; }
+.bar .keys { display: inline-flex; gap: .4rem; align-items: center; }
 .speak fieldset { border: 0; margin: 0 0 .6rem; padding: 0; display: flex; flex-wrap: wrap; gap: .3rem 1.4rem; }
 .speak legend { font-weight: 600; padding: 0; margin: 0 0 .3rem; }
 .speak label { display: inline-flex; gap: .45rem; align-items: center; }
 .speak input { width: 1.1rem; height: 1.1rem; accent-color: var(--teal); }
 .speak .row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .6rem 0 0; }
 #said { font-size: 1.25rem; margin: .2rem 0 0; min-height: 1.6em; overflow-wrap: anywhere; }
-#said:empty::before { content: "Nothing said yet."; color: var(--muted); font-size: 1rem; }
+#said:empty::before { content: "Nothing yet."; color: var(--muted); font-size: 1rem; }
 .speak p.note { color: var(--muted); margin: .4rem 0 0; font-size: .92rem; }
 @media (prefers-reduced-motion: reduce) { .btnface, .keyface { transition: none; } }
 .bar .cpu { font-variant-numeric: tabular-nums; }
@@ -91,7 +94,7 @@ kbd { font: 600 .85em ui-monospace, Menlo, monospace; background: var(--card); b
 <div class="devicebox">
 <div class="device" id="device">
   <svg id="panel" viewBox="0 0 1000 640" aria-hidden="true" focusable="false"></svg>
-  <canvas id="screen" width="240" height="240" role="img" aria-label="The FM-1's screen. Its words are read out: see Speak the screen, below the panel"></canvas>
+  <canvas id="screen" width="240" height="240" role="img" aria-label="The FM-1's screen. Its text is read out: see Screen Reader, below the panel"></canvas>
   <div id="controls" role="group" aria-label="The FM-1's panel" aria-describedby="panel-keys" inert></div>
   <div class="start" id="start"><button type="button" id="go">Switch on</button></div>
 </div>
@@ -104,26 +107,26 @@ kbd { font: 600 .85em ui-monospace, Menlo, monospace; background: var(--card); b
   <span id="status" role="status">Off. Sound starts when you switch it on.</span>
   <span id="alert" role="alert"></span>
   <button id="mute" type="button" aria-pressed="false">Mute</button>
+  <label class="keys"><input type="checkbox" id="shortcuts" checked> Keyboard shortcuts</label>
   <span class="cpu" id="cpu"></span>
   <button id="reset" type="button" aria-describedby="reset-why">Factory reset</button>
   <span id="reset-why" class="sr">Forget what was saved and start again from the factory settings</span>
 </div>
 
-<section class="speak" aria-labelledby="h-speak">
-  <h2 id="h-speak">Speak the screen</h2>
+<details class="speak" id="speak">
+  <summary><h2>Screen Reader</h2></summary>
   <fieldset>
-    <legend>Who reads the screen</legend>
-    <label><input type="radio" name="speak" value="sr" checked> My own screen reader</label>
-    <label><input type="radio" name="speak" value="voice"> This page's voice</label>
-    <label><input type="radio" name="speak" value="off"> Nobody</label>
+    <legend>Output</legend>
+    <label><input type="radio" name="speak" value="sr" checked> System screen reader</label>
+    <label><input type="radio" name="speak" value="voice"> Built-in voice</label>
+    <label><input type="radio" name="speak" value="off"> Off</label>
   </fieldset>
   <p id="said" aria-hidden="true"></p>
   <div class="row">
-    <button type="button" id="where" disabled>Read the whole screen</button>
-    <button type="button" id="again" disabled>Say it again</button>
-    <label><input type="checkbox" id="shortcuts" checked> Keyboard shortcuts on the panel</label>
+    <button type="button" id="where" disabled>Read whole screen</button>
+    <button type="button" id="again" disabled>Repeat last</button>
   </div>
-</section>
+</details>
 <!-- what the screen says, for the computer's screen reader -->
 <div id="live-p" class="sr" aria-live="polite" aria-atomic="true"></div>
 <div id="live-a" class="sr" aria-live="assertive" aria-atomic="true"></div>
@@ -505,9 +508,11 @@ function drawLights(b, k) {
 // The firmware tells a reader what its screen shows (fm1-reader's PROTOCOL.md: SysEx F0 7D 53 52 cmd ... F7). Here
 // the reader is this page: HELLO every 2 s through the emulator (web_sysex), SAY frames back (web_said_buf), put in
 // words with fm1-reader's words.js and the app's words file, then read by the computer's screen reader (a live region)
-// or by this page's voice (tts.js, eSpeak NG).
+// or by the built-in voice (tts.js, eSpeak NG).
 const SR_HELLO = [0x7d, 0x53, 0x52, 1, 1], SR_BYE = [0x7d, 0x53, 0x52, 2], SR_WHERE = [0x7d, 0x53, 0x52, 3];
 const speakMode = () => document.querySelector('input[name="speak"]:checked').value;
+if (prefs.speakOpen) $("speak").open = true;
+$("speak").addEventListener("toggle", () => { prefs.speakOpen = $("speak").open; savePrefs(); });
 if (["sr", "voice", "off"].includes(prefs.speak)) document.querySelector(`input[name="speak"][value="${prefs.speak}"]`).checked = true;
 let helloTimer = null, heard = false, said = false, words = [], wordsReady = null, chain = Promise.resolve();
 let spoken = (s) => s, tts = null, ttsReady = null, last = null, liveFlip = false, keeping = 0;
@@ -579,7 +584,7 @@ function onSaid(bytes) {
 }
 async function voiceOn() {
   if (!ttsReady) ttsReady = import("./reader/tts.js").then((m) => m.createTTS()).then((t) => (tts = t))
-    .catch(() => { showAlert("This page's voice could not start in this browser. Choose My own screen reader."); ttsReady = null; });
+    .catch(() => { showAlert("The built-in voice could not start in this browser. Choose System screen reader."); ttsReady = null; });
   const t = await ttsReady;
   if (t) t.unlock();
 }
