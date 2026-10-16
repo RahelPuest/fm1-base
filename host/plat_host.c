@@ -76,7 +76,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "plat.h"
 #include "app.h"
 #include "fm1b_config.h"
-static const uint8_t WHITE_K[16] = PLAT_WHITE_KEYS, BLACK_K[11] = PLAT_BLACK_KEYS;
+static const uint8_t HOST_WHITE_K[16] = PLAT_WHITE_KEYS, HOST_BLACK_K[11] = PLAT_BLACK_KEYS;
 /* "spin": encoder steps exactly as given; an app that accelerates its knobs reads this (#ifdef PLAT_HOST) */
 static uint8_t plat_host_exact;
 
@@ -485,9 +485,9 @@ static int find_name(const char *const *t, int n, const char *s)
 static int key_of(const char *s)
 {
     if (s[0] == 'w')
-        return WHITE_K[atoi(s + 1) & 15];
+        return HOST_WHITE_K[atoi(s + 1) & 15];
     if (s[0] == 'b')
-        return BLACK_K[atoi(s + 1) % 11];
+        return HOST_BLACK_K[atoi(s + 1) % 11];
     return atoi(s);
 }
 
@@ -632,9 +632,9 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "strum")) {          /* strum A B [MS]: a finger across the white keys */
             int x = atoi(a), y = atoi(b), gap = c[0] ? atoi(c) : 25, s = y >= x ? 1 : -1;
             for (;; x += s) {
-                held_keys |= 1u << WHITE_K[x & 15];
+                held_keys |= 1u << HOST_WHITE_K[x & 15];
                 run_ms((uint32_t)gap);
-                held_keys &= ~(1u << WHITE_K[x & 15]);
+                held_keys &= ~(1u << HOST_WHITE_K[x & 15]);
                 if (x == y)
                     break;
             }
@@ -706,10 +706,10 @@ int main(int argc, char **argv)
                     printf(" %s", BTN_N[i]);
             printf(" | white ");
             for (i = 0; i < 16; i++)
-                printf("%c", (lit_keys >> WHITE_K[i] & 1u) ? '#' : (dim_keys >> WHITE_K[i] & 1u) ? '+' : '.');
+                printf("%c", (lit_keys >> HOST_WHITE_K[i] & 1u) ? '#' : (dim_keys >> HOST_WHITE_K[i] & 1u) ? '+' : '.');
             printf(" black ");
             for (i = 0; i < 11; i++)
-                printf("%c", (lit_keys >> BLACK_K[i] & 1u) ? '#' : (dim_keys >> BLACK_K[i] & 1u) ? '+' : '.');
+                printf("%c", (lit_keys >> HOST_BLACK_K[i] & 1u) ? '#' : (dim_keys >> HOST_BLACK_K[i] & 1u) ? '+' : '.');
             printf("\n");
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);
