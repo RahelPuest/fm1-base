@@ -73,13 +73,20 @@ BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_m
 
 
 def read_conf(path):
-    """fm1.toml: key = "string" | number | true | false | ["string", ...], # comments (the little TOML a firmware
-    needs)"""
+    """fm1.toml: key = "string" | number | true | false | ["string", ...] (a list may go on over several lines),
+    # comments (the little TOML a firmware needs)"""
     conf = {}
+    pending, start = "", 0
     for no, line in enumerate(path.read_text().splitlines(), 1):
         line = re.sub(r"\s+#.*$", "", line).strip()
         if not line or line.startswith("#"):
             continue
+        if pending:                                  # a list's next line
+            line, no = pending + " " + line, start
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*\[", line) and "]" not in line:
+            pending, start = line, no
+            continue
+        pending = ""
         m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)", line)
         if not m:
             raise SystemExit(f"{path}:{no}: not key = value")
@@ -92,6 +99,8 @@ def read_conf(path):
             conf[m.group(1)] = v == "true"
         else:
             conf[m.group(1)] = int(v, 0)
+    if pending:
+        raise SystemExit(f"{path}:{start}: a list without its ]")
     return conf
 
 
