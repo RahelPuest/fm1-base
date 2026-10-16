@@ -7,5 +7,6 @@ static const uint8_t radio_last_bad = 0;
 static void radio_boot_note(void) {}
 static void radio_clean_exit(void) {}
 #include "ble_none.c"
+void plat_log(const char *line) { (void)line; }
 const char *plat_ble_log_line(int back) { (void)back; return ""; }
 uint32_t plat_ble_log_total(void) { return 0; }

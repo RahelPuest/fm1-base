@@ -107,6 +107,8 @@ int plat_wifi_found(int i, char *ssid, int *rssi, int *secured);   /* the scan's
 int plat_wifi_join(const char *ssid, const char *pass);   /* pass 0: the saved one's, or none; kept once joined */
 int plat_wifi_saved(int i, char *ssid);   /* the networks kept, the most recent first; 0 = none */
 void plat_wifi_forget(int i);
+int plat_wifi_kept(const char *ssid);  /* the network is kept (its password known): plat_wifi_join(ssid, 0) joins it */
+uint32_t plat_wifi_scans(void);        /* scans done since the start: a change means plat_wifi_found has new results */
 int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task for the app's network code (8 KiB
                                                                         * of stack); 0 = made */
 
@@ -114,7 +116,9 @@ int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task 
  * what they share (it nests) */
 uint32_t plat_lock(void);
 void plat_unlock(uint32_t f);
-void plat_yield(void);                 /* long work in the main loop (drawing) lets the app's background run (app_yield) */
+void plat_yield(void);
+void plat_log(const char *line);       /* a line for the radio's log (fm1_remote.py log; it survives a restart) */
+void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */                 /* long work in the main loop (drawing) lets the app's background run (app_yield) */
 
 /* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */
@@ -147,4 +151,6 @@ uint32_t plat_xruns(void);
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
  *                   int app_key_drive(uint32_t key) (read it driven), void app_key_probe(uint32_t key, uint32_t v,
  *                   uint32_t pressed) (the top row), int app_key_led_ok(uint32_t key) (0: its column dark when read);
- *                   from the scan's interrupt */
+ *                   from the scan's interrupt
+ *   APP_SYSEX       int app_sysex(const uint8_t *p, uint32_t n)   a SysEx frame from USB the platform does not take
+ *                   (p: the bytes between F0 and F7); 1 = the app's. Its answers: plat_sysex_send. Main loop */

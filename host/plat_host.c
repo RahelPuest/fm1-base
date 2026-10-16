@@ -329,6 +329,15 @@ void plat_wifi_forget(int i)
     if (i >= 0 && i < 6)
         memmove(wf_kept[i], wf_kept[i + 1], (size_t)(5 - i) * sizeof wf_kept[0]), memset(wf_kept[5], 0, 33);
 }
+int plat_wifi_kept(const char *ssid)
+{
+    int i;
+    for (i = 0; ssid && i < 6; i++)
+        if (wf_kept[i][0] && !strcmp(wf_kept[i], ssid))
+            return 1;
+    return 0;
+}
+uint32_t plat_wifi_scans(void) { return wf_st >= WIFI_ON ? 1u : 0u; }
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { (void)fn, (void)arg, (void)name; return -1; }
 #endif
 uint32_t plat_ble_log_total(void) { return ble_log_n; }
@@ -339,6 +348,8 @@ const char *plat_ble_log_line(int back)
     return ble_log[(ble_log_n - 1u - (uint32_t)back) % 8];
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
+void plat_log(const char *line) { ble_say(line); }
+void plat_sysex_send(const uint8_t *frame, uint32_t n) { (void)frame, (void)n; }
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];

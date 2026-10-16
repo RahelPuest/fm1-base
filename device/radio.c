@@ -598,6 +598,7 @@ void plat_ble_start(void) { ble_start(); }
 #endif
 
 /* ---- plat.h: the radio's log */
+void plat_log(const char *line) { shim_log(line); }
 const char *plat_ble_log_line(int back)
 {
     if (blog.magic != BLE_LOG_MAGIC || back < 0 || (uint32_t)back >= blog.w || back >= BLE_LOG_N)

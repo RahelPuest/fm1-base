@@ -684,6 +684,9 @@ static void fm1_main(void)
 #if FM1B_WIFI
                                           || wifi_frame(p, n)
 #endif
+#ifdef APP_SYSEX
+                                          || app_sysex(p, n)
+#endif
                                           ))
                 ota_frame_done();
         }

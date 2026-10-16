@@ -241,6 +241,7 @@ static int wifi_event_cb(void *ctx, int event)
 typedef struct { char ssid[33]; int8_t rssi; uint8_t secured; } scan_t;
 static scan_t scan_list[SCAN_N];
 static int scan_n;
+static uint32_t wifi_scans;                       /* scans collected (plat_wifi_scans) */
 
 /* after WIFI_EVENT_STA_SCAN_COMPLETED (a scan of ours, or a join's): the results, strongest first, each network
  * once (the strongest of its access points) */
@@ -273,6 +274,7 @@ static void wifi_scan_collect(void)
     }
     if (r)
         wifi_clear_scan_result();
+    wifi_scans++;
 }
 
 /* the main loop's turn: timers, every task that can run, then what the events left to do */
@@ -380,4 +382,10 @@ void plat_wifi_forget(int i)
     memset(&nets.n[NET_N - 1], 0, sizeof nets.n[0]);
     nets_save();
 }
+int plat_wifi_kept(const char *ssid)
+{
+    nets_load();
+    return ssid && nets_find(ssid) >= 0;
+}
+uint32_t plat_wifi_scans(void) { return wifi_scans; }
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { return task_create(fn, arg, name); }

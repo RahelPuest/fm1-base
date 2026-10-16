@@ -124,6 +124,7 @@ void plat_unlock(uint32_t f)
         fm1_irq_on();
     }
 }
+void plat_sysex_send(const uint8_t *frame, uint32_t n) { ota_wire_send(frame, n); }
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
