@@ -18,7 +18,8 @@
  *   spin ENC N                   N detents at once, exactly N (no acceleration)
  *   master N                     MASTER pot 0..4096 (then 40 ms, as the device's smoothing settles)
  *   midi [PORT] B0 B1 B2         incoming MIDI message (PORT: USB, the default, BLE or TRS; hex bytes)
- *   ble connect | ble disconnect a central (FM1B_BLE: the stand-in stack is ready a second after the start)
+ *   ble connect | ble link | ble disconnect   a central listening, or linked and not yet listening (FM1B_BLE: the
+ *                                stand-in stack is ready a second after the start)
  *   wav FILE | wavstop           start / stop recording the output
  *   peakreset                    restart the output peak (expect peak_db_min / peak_db_max)
  *   shot FILE.png                save the screen
@@ -187,7 +188,9 @@ static char ble_log[8][40];
 static uint32_t ble_log_n;
 static void ble_say(const char *s) { snprintf(ble_log[ble_log_n++ % 8], 40, "%s", s); }
 int plat_ble_state(void) { return ble_state; }
+static int ble_link;                            /* "ble link": a computer linked, not listening yet */
 int plat_ble_connected(void) { return ble_conn; }
+int plat_ble_linked(void) { return ble_conn || ble_link; }
 void plat_ble_start(void)
 {
     if (ble_state != BLE_OFF || !FM1B_BLE)
@@ -251,7 +254,7 @@ void plat_ble_enable(int on)
 {
     if (!on) {
         bdev_state = BLE_DEV_OFF;
-        ble_conn = 0;
+        ble_conn = ble_link = 0;
         ble_state = BLE_OFF;
         ble_say("switched off");
     } else {
@@ -575,7 +578,7 @@ static void boot(void)
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
-    ble_conn = 0;
+    ble_conn = ble_link = 0;
     bdev_state = BLE_DEV_OFF;
     if (APP_BLE_AT_BOOT)
         plat_ble_start();
@@ -852,8 +855,11 @@ int main(int argc, char **argv)
             if (!strcmp(a, "connect") && ble_state == BLE_READY) {
                 ble_conn = 1;
                 ble_say("connected");
+            } else if (!strcmp(a, "link") && ble_state == BLE_READY) {   /* linked, its MIDI not subscribed */
+                ble_link = 1;
+                ble_say("connected");
             } else if (!strcmp(a, "disconnect")) {
-                ble_conn = 0;
+                ble_conn = ble_link = 0;
                 ble_say("disconnected: reason 13");
             } else {
                 printf("line %d: ble %s: the stack is not ready\n", lineno, a);

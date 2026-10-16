@@ -67,6 +67,8 @@ uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFF
 enum { BLE_OFF, BLE_STARTING, BLE_READY, BLE_FAILED };
 int plat_ble_state(void);
 int plat_ble_connected(void);          /* a central is connected and listening */
+int plat_ble_linked(void);             /* a central is connected, listening or not yet (a Mac whose MIDI driver
+                                        * never subscribed holds the link, and the FM-1 stops advertising) */
 void plat_ble_start(void);
 uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
 const char *plat_ble_log_line(int back);   /* 0 = the newest */

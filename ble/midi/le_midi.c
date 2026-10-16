@@ -203,6 +203,7 @@ static int mc_ready(void) { return 0; }
 static int periph_ready(void) { return con_handle && CCC_GET(con_handle, H_CCC); }
 int ble_midi_connected(void) { return periph_ready() || mc_ready(); }
 int ble_midi_peripheral_connected(void) { return periph_ready(); }
+int ble_midi_peripheral_linked(void) { return con_handle != 0; }   /* listening or not yet */
 static u16 send_mtu = 20;                        /* ATT payload: 23 - 3 until the exchange says more */
 int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
 {

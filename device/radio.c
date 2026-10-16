@@ -552,10 +552,12 @@ static void ble_poll(void)
 
 /* ---- plat.h */
 extern int ble_midi_peripheral_connected(void);
+extern int ble_midi_peripheral_linked(void);
 extern void ble_midi_enable(int on);
 static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
 int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
 int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+int plat_ble_linked(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_linked(); }
 void plat_ble_enable(int on)
 {
     ble_off = (uint8_t)!on;
