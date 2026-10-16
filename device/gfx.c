@@ -15,7 +15,10 @@ typedef struct {               /* proportional, see tools/gen_font.py */
 } felucca_font_t;
 #include "felucca_font.h"
 
-#define CV_MAX (240u * 144u)      /* X0X: the main area, both bands, is 240 x 144 */
+#ifndef APP_CANVAS_PX
+#define APP_CANVAS_PX (240u * 144u)   /* X0X: the main area, both bands, is 240 x 144 */
+#endif
+#define CV_MAX APP_CANVAS_PX      /* (app.h may give less: a WiFi build needs the pool; cv_begin keeps to it) */
 static uint16_t cv_px[CV_MAX] __attribute__((section(".pool")));
 static uint32_t cv_w, cv_h;
 static int32_t cv_oy;            /* y offset for graph drawing */
