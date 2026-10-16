@@ -54,7 +54,9 @@ void shim_reboot(void) { fm1_reboot(); }
 __attribute__((section(".ram_text"), noinline, used)) void shim_delay_us(uint32_t us) { fm1_busy_us_inl(us); }
 
 
-/* the radio's interrupts sit above the input timer (4): JieLi asks for 0..2, mapped to 5..7 */
+/* the radio's interrupts sit between the audio (3) and the input timer (5): JieLi asks for 0..2 (above its
+ * own peripherals), all mapped to 4. Above the timer (fm1-ble's 5..7) a received packet held the key and
+ * light scan up for up to 17 ms, and the lights flickered with every MIDI message from a device */
 static void hex8(char *b, uint32_t v);
 void shim_request_irq(int index, int prio, void (*handler)(void))
 {
@@ -73,7 +75,8 @@ void shim_request_irq(int index, int prio, void (*handler)(void))
     }
     f = irq_save();
     fm1_guard_unlock_top();
-    fm1_irq_attach((uint32_t)index, handler, (uint32_t)(prio + 5 > 7 ? 7 : prio + 5));
+    (void)prio;
+    fm1_irq_attach((uint32_t)index, handler, 4u);
     fm1_guard_lock_top();
     irq_restore(f);
 }
