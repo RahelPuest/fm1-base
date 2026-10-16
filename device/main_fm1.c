@@ -556,8 +556,8 @@ static void splash(void)                           /* the app's (APP_SPLASH), or
     lcd_fill(0, 0, 240, 240, RGB(250, 244, 232));
     cv_begin(240, 64, RGB(250, 244, 232));
     {
-        int32_t w = text_w(&FONT_L, APP_NAME);
-        cv_text((240 - w) / 2, 0, &FONT_L, APP_NAME, APP_SPLASH_RGB);
+        int32_t w = text_w(&APP_BIG_FONT, APP_NAME);
+        cv_text((240 - w) / 2, 0, &APP_BIG_FONT, APP_NAME, APP_SPLASH_RGB);
         w = text_w(&FONT_S, APP_TAGLINE);
         cv_text((240 - w) / 2, 42, &FONT_S, APP_TAGLINE, RGB(150, 136, 118));
     }

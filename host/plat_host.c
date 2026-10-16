@@ -131,8 +131,10 @@ static uint32_t min_port[MQ];
 static uint32_t out_pkt[4096], out_to[4096], n_out;   /* what went out since the script's last "out" */
 static int ble_state, ble_conn, bdev_state;   /* bdev_state: the Bluetooth MIDI device (BLE_DEV_*) */
 static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];   /* plat_midi_count */
-static void midi_counted(int port, int out)
+static void midi_counted(int port, int out, uint32_t pkt)
 {
+    if ((pkt >> 8 & 0xFFu) >= 0xF8u)             /* clock, start, stop, active sensing: not counted, no light */
+        return;
     midi_n[port][out]++;
     midi_t[port][out] = plat_ms() | 1u;
 }
@@ -151,7 +153,7 @@ int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" */
         *port = p;
     *pkt = min_q[mi_r++ % MQ];
     if (p >= 0 && p < NPORTS)
-        midi_counted(p, 0);
+        midi_counted(p, 0, *pkt);
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
@@ -162,9 +164,9 @@ void plat_midi_send(uint32_t pkt, uint32_t to)
     if (!to)
         return;
     if (to & TO_USB)
-        midi_counted(PORT_USB, 1);
+        midi_counted(PORT_USB, 1, pkt);
     if (to & TO_BLE)
-        midi_counted(PORT_BLE, 1);
+        midi_counted(PORT_BLE, 1, pkt);
     midi_out_count++;
     if (n_out < 4096) {
         out_pkt[n_out] = pkt;

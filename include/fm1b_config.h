@@ -6,6 +6,9 @@
 #ifndef APP_NAME
 #define APP_NAME "TEMPLATE"              /* on the splash, crash and safe-mode screens and for the screen reader */
 #endif
+#ifndef APP_BIG_FONT
+#define APP_BIG_FONT FONT_L              /* the splash's name and the panel's screens (capitals): FONT_M saves 20 KB */
+#endif
 #ifndef APP_SPLASH_RGB
 #define APP_SPLASH_RGB RGB(242, 120, 72) /* the name on the splash screen */
 #endif

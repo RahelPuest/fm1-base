@@ -141,8 +141,10 @@ void plat_yield(void)
  * does. Bluetooth has its own queue (radio.c, main loop). */
 /* each port's messages, in and out (plat_midi_count): for the app's MIDI lights and counters */
 static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];
-static void midi_counted(int port, int out)
+static void midi_counted(int port, int out, uint32_t pkt)
 {
+    if ((pkt >> 8 & 0xFFu) >= 0xF8u)             /* clock, start, stop, active sensing: not counted, no light */
+        return;
     midi_n[port][out]++;
     midi_t[port][out] = plat_ms() | 1u;          /* (0: never) */
 }
@@ -167,7 +169,7 @@ int plat_midi_in(uint32_t *pkt, int *port)
         return 0;
     if (port)
         *port = from;
-    midi_counted(from, 0);
+    midi_counted(from, 0, *pkt);
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tick's rings are shared */
@@ -177,11 +179,11 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
         f = plat_lock();
     if (to & TO_USB) {
         midi_out_event(pkt);
-        midi_counted(PORT_USB, 1);
+        midi_counted(PORT_USB, 1, pkt);
     }
     if (to & TO_BLE) {
         ble_midi_tap(pkt);
-        midi_counted(PORT_BLE, 1);
+        midi_counted(PORT_BLE, 1, pkt);
     }
     if (!in_tick)
         plat_unlock(f);
