@@ -1,13 +1,12 @@
 # fm1-base
 
-An MPL-2.0 base firmware for the M-VAVE FM-1 on felucca-bsp: the platform layer and examples for building firmware
-(display, drawing, storage, panel, MIDI, audio, USB, radio). Clean side of a clean-room process; only the designer and
-writers work here.
+A base for M-VAVE FM-1 firmware, on [felucca-bsp](https://github.com/hugelton/felucca-bsp): the platform layer
+above the hardware (screen, drawing and fonts, panel, LEDs, audio, MIDI over USB and TRS, storage, the screen reader),
+a host simulator and a browser emulator that run the same app, and the tools to build, package and install it.
+MPL-2.0: an app built on it may use any licence. See [DESIGN.md](DESIGN.md), [LICENSING.md](LICENSING.md) and
+[CREDITS.md](CREDITS.md).
 
-| Path | What |
-| --- | --- |
-| `needs/` | What firmwares need from the platform, released after audit |
-| `design/` | The design (modules, APIs, examples) |
-| `provided/` | felucca-bsp (MPL-2.0), `provided/MANIFEST.sha256` |
-| `checks/` | Build and test output |
-| `provenance/` | Session transcripts and prompts |
+Status: being assembled from the platform layer of the FM-1 firmwares (FoMni-1, X0X, CTL-1 and others). Not yet
+buildable on its own.
+
+    git clone --recursive https://github.com/charlesvestal/fm1-base

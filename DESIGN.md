@@ -88,3 +88,4 @@ backup) are generated from templates with the firmware's name and words file.
 3. hwtest gets an update path from the template's hooks; the real hwtest is run on a device; the second-core PR is tested.
 4. CTL-1 moves onto fm1-base, with its Bluetooth build, which can then be released.
 5. The other firmwares, one at a time; the optional groups come in with the first firmware that needs each.
+6. After CTL-1's move: a skill, "move a Felucca fork onto felucca-bsp and fm1-base", written from what that move took.
