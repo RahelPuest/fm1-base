@@ -57,6 +57,67 @@ extern struct wifi_scan_ssid_info *wifi_get_scan_result(u32 *ssid_cnt);
 extern void wifi_clear_scan_result(void);
 extern void wifi_set_tx_rate_control_tab(u32 tab);
 extern void lwip_get_netif_info(u8 is_wireless, struct netif_info *info);
+extern void wifi_set_frame_cb(void (*cb)(void *rxwi, void *wh, void *data, u32 len, void *priv), void *priv);
+
+/* reception: every frame the radio receives (anyone's), counted with its signal (RXWI word 2: RSSI0, bits 0-7;
+ * fm1-radio's), a second at a time: plat_wifi_rx. A burst of the driver's "No BEACON" notes it in the log */
+static volatile uint32_t fr_n;
+static volatile int32_t fr_rssi;
+static uint32_t rx_fps, rx_t0;
+static int32_t rx_rssi;
+static void wifi_frame_cb(void *rxwi, void *wh, void *data, u32 len, void *priv)
+{
+    const uint32_t *w = rxwi;
+    (void)wh, (void)data, (void)len, (void)priv;
+    if (!w)
+        return;
+    fr_n++;
+    fr_rssi += (int8_t)w[2];
+}
+static void rx_second(void)                       /* wifi_poll: a second's frames */
+{
+    uint32_t now = shim_ms();
+    if (now - rx_t0 < 1000u)
+        return;
+    rx_t0 = now;
+    rx_fps = fr_n;
+    rx_rssi = fr_n ? fr_rssi / (int32_t)fr_n : 0;
+    fr_n = 0;
+    fr_rssi = 0;
+}
+static void wifi_log_watch(const char *s)         /* radio.c shim_log: the first "No BEACON" of a burst, when */
+{
+    static uint32_t last;
+    const char *p;
+    for (p = s; *p && !(p[0] == 'N' && p[1] == 'o' && p[2] == ' ' && p[3] == 'B' && p[4] == 'E'); p++)
+        ;
+    if (!*p)
+        return;
+    if (shim_ms() - last > 5000u) {
+        char b[40] = "beacons lost at ", *q = b + 16;
+        uint32_t v[3] = {shim_ms() / 1000u, rx_fps, (uint32_t)-rx_rssi}, i, k;
+        static const char *const L[3] = {" s, rx ", "/s ", ""};
+        last = shim_ms();
+        for (i = 0; i < 3u; i++) {
+            char t[12];
+            int n = 0;
+            k = v[i];
+            do {
+                t[n++] = (char)('0' + k % 10u);
+                k /= 10u;
+            } while (k);
+            if (i == 2u)
+                *q++ = '-';
+            while (n)
+                *q++ = t[--n];
+            for (p = L[i]; *p;)
+                *q++ = *p++;
+        }
+        *q = 0;
+        shim_log(b);
+    }
+    last = shim_ms();
+}
 
 /* the station's MAC: the BT address kept in syscfg (radio.c), made a locally administered unicast one; without it
  * the library joins as 00:00:00:00:00:00 */
@@ -309,6 +370,7 @@ static void wifi_poll(void)
         wifi_join_due = 0;
         wf_nets_front(wifi_ssid, wifi_pass);         /* joined: kept, the most recent first */
     }
+    rx_second();
     if (wifi_st == WIFI_CONNECTED && wifi_is_on())
         wifi_rssi = (int8_t)wifi_get_rssi();
     if (wifi_scan_done) {
@@ -337,6 +399,7 @@ void plat_wifi_on(int on)
         wifi_powered = 1;
         if (wifi_on())
             shim_log("WiFi: wifi_on failed");
+        wifi_set_frame_cb(wifi_frame_cb, 0);
     } else if (!on && wifi_st != WIFI_OFF) {
         wifi_st = WIFI_OFF;
         wifi_ip = 0;
@@ -405,4 +468,11 @@ int plat_wifi_kept(const char *ssid)
     return ssid && wf_nets_find(ssid) >= 0;
 }
 uint32_t plat_wifi_scans(void) { return wifi_scans; }
+void plat_wifi_rx(uint32_t *frames, int *rssi)
+{
+    if (frames)
+        *frames = wifi_st >= WIFI_ON ? rx_fps : 0;
+    if (rssi)
+        *rssi = wifi_st >= WIFI_ON ? (int)rx_rssi : 0;
+}
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { return task_create(fn, arg, name); }

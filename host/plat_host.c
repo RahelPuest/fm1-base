@@ -344,6 +344,13 @@ int plat_wifi_kept(const char *ssid)
     return 0;
 }
 uint32_t plat_wifi_scans(void) { return wf_st >= WIFI_ON ? 1u : 0u; }
+void plat_wifi_rx(uint32_t *frames, int *rssi)
+{
+    if (frames)
+        *frames = wf_st >= WIFI_ON ? 40u : 0u;
+    if (rssi)
+        *rssi = wf_st >= WIFI_ON ? -55 : 0;
+}
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { (void)fn, (void)arg, (void)name; return -1; }
 #endif
 uint32_t plat_ble_log_total(void) { return ble_log_n; }

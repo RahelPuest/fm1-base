@@ -133,8 +133,14 @@ static struct {
     char line[BLE_LOG_N][40];
 } blog __attribute__((section(".noinit")));
 void shim_wdt(void) { fm1_wdt_feed(); }
+#if FM1B_WIFI
+static void wifi_log_watch(const char *s);
+#endif
 void shim_log(const char *s)
 {
+#if FM1B_WIFI
+    wifi_log_watch(s);
+#endif
     char *d = blog.line[blog.w % BLE_LOG_N];
     uint32_t i;
     if (blog.magic != BLE_LOG_MAGIC)

@@ -110,6 +110,8 @@ int plat_wifi_join(const char *ssid, const char *pass);   /* pass 0: the saved o
 int plat_wifi_saved(int i, char *ssid);   /* the networks kept, the most recent first; 0 = none */
 void plat_wifi_forget(int i);
 int plat_wifi_kept(const char *ssid);  /* the network is kept (its password known): plat_wifi_join(ssid, 0) joins it */
+void plat_wifi_rx(uint32_t *frames, int *rssi);   /* reception: frames received in the last second (anyone's), their
+                                                   * average signal */
 uint32_t plat_wifi_scans(void);        /* scans done since the start: a change means plat_wifi_found has new results */
 int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task for the app's network code (8 KiB
                                                                         * of stack); 0 = made */

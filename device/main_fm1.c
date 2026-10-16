@@ -398,6 +398,15 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
         }
         q = wifi_cat(q, " ", e);
         q = wifi_num(q, plat_wifi_rssi(), e);
+        {
+            uint32_t fps;
+            int rr;
+            plat_wifi_rx(&fps, &rr);
+            q = wifi_cat(q, " rx ", e);
+            q = wifi_num(q, (int32_t)fps, e);
+            q = wifi_cat(q, "/s ", e);
+            q = wifi_num(q, rr, e);
+        }
         q = wifi_cat(q, " ", e);
         wifi_cat(q, plat_wifi_why(), e);
         wifi_line(b);
