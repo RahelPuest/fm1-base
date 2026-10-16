@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
-/* OMNI on the host: the whole app (UI, project, engine) against a simulated FM-1 driven by a script.
+/* fm1-base on the host: the whole app (UI, engine, saved state) against a simulated FM-1 driven by a script.
  * Audio goes to a WAV, the screen to PNGs, the lights to text, MIDI out to a log. The device-only
- * parts (HAL, USB, OTA, flash driver) are replaced by plat.h implemented here. (From X0X's x0x_host.)
+ * parts (the BSP, USB, update, flash driver) are replaced by plat.h implemented here. (From X0X's x0x_host, by way
+ * of FoMni-1's.) Built by tools/build.py APP_DIR --host into APP_DIR/build/host/NAME_host.
  *
- *   omni_host SCRIPT [OUTDIR]
+ *   NAME_host SCRIPT [OUTDIR]
  *
  * Script, one command per line (# comments):
  *   wait MS                      run the device for MS milliseconds
@@ -25,10 +26,12 @@
  *                                ("said: ..."; "said!:" cuts off what was being said)
  *   where                        the reader asks for everything on the screen
  *   said TEXT                    some SAY since the last "said" (or "listen") has TEXT in it: else a failure
- *   speakdump                    every page, knob value, chord and message as the reader gets them (the audit)
- * OMNI_SAID_LOG=FILE: a reader listens from boot, quietly, and every SAY is appended to FILE (the audit).
+ *   speakdump                    every page, value and message as the reader gets them (the app's app_speak_dump)
+ * The app may add its own checks for expect (app_expect), the speakdump (app_speak_dump) and what a reboot forgets
+ * (app_host_reboot): app.h defines APP_HOST_EXPECT / APP_HOST_SPEAKDUMP / APP_HOST_REBOOT when it has them.
+ * FM1B_SAID_LOG=FILE: a reader listens from boot, quietly, and every SAY is appended to FILE (the audit).
  */
-#define OM_HOST 1
+#define PLAT_HOST 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,11 +61,16 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
             if (x + i < 240u && y + j < 240u)
                 fb[(y + j) * 240u + x + i] = px[j * w + i];
 }
-#include "../firmware/src/gfx.c"
+#include "gfx.c"
 
 
 /* ---------------------------------------------------------- platform --- */
-#include "../firmware/src/app/plat.h"
+#include "plat.h"
+#include "app.h"
+#include "fm1b_config.h"
+static const uint8_t WHITE_K[16] = PLAT_WHITE_KEYS, BLACK_K[11] = PLAT_BLACK_KEYS;
+/* "spin": encoder steps exactly as given; an app that accelerates its knobs reads this (#ifdef PLAT_HOST) */
+static uint8_t plat_host_exact;
 
 static uint32_t now_ms, held_btn, held_keys, master = 2048;
 static int32_t enc_acc[NE];
@@ -109,11 +117,10 @@ void plat_midi_out(uint32_t pkt)
         fprintf(midi_log, "%u ms: %02X %02X %02X\n", now_ms, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF, (pkt >> 24) & 0xFF);
 }
 /* the engine's MIDI out, as the device's glue sends it (USB-MIDI packet, cable 0) */
-void om_midi_out(uint32_t st, uint32_t d1, uint32_t d2) { plat_midi_out(st >> 4 | st << 8 | d1 << 16 | d2 << 24); }
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
-static int store_len[OBJ_NOBJ] = {-1, -1};
+static int store_len[OBJ_NOBJ];           /* -1 = nothing saved (store_init) */
 static uint32_t store_writes;
 int plat_store_load(uint32_t obj, void *dst, uint32_t max)
 {
@@ -140,21 +147,20 @@ uint32_t plat_cpu_pct(void) { return cpu_pct; }
 uint32_t plat_xruns(void) { return 0; }
 
 /* -------------------------------------------------------------- app --- */
-#include "../firmware/src/app/app.h"
-#define ANN_NAME "FoMni-1 " OM_VERSION
+#define ANN_NAME APP_NAME " " APP_VERSION
 #include "ann_words.h"                                  /* the words file's link (tools/gen_words.py) */
-#include "../firmware/src/announce.c"
+#include "announce.c"
 /* what the reader is told: every SAY to stdout with "said:" (listen), and kept for the "said" check */
 static char said_last[ANN_MAX + 1], said_log[16384];   /* said_log: every SAY since the last "said" check */
 static uint32_t said_len;
 static int said_print = 1, sim_listen;
-static FILE *said_log_f;                                /* OMNI_SAID_LOG=FILE: every SAY, for fm1-reader's audit */
-#ifdef OM_WEB
+static FILE *said_log_f;                                /* FM1B_SAID_LOG=FILE: every SAY, for fm1-reader's audit */
+#ifdef PLAT_WEB
 static void web_said(const uint8_t *p, uint32_t n);
 #endif
 static int ann_wire_send(const uint8_t *p, uint32_t n)
 {
-#ifdef OM_WEB
+#ifdef PLAT_WEB
     web_said(p, n);
 #endif
     if (n >= 7u && p[4] == ANN_SAY) {
@@ -168,7 +174,7 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
             said_log[said_len++] = '\n';
             said_log[said_len] = 0;
         }
-#ifndef OM_WEB
+#ifndef PLAT_WEB
         if (said_print)
             printf("said%s: %s\n", (p[5] & ANN_NOW) ? "!" : "", said_last);
         if (said_log_f)
@@ -177,8 +183,7 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
     }
     return 0;
 }
-#include "../firmware/src/app/project.c"
-#include "../firmware/src/app/ui.c"
+#include "app.c"
 
 /* ---------------------------------------------------------- outputs --- */
 static void png_write(const char *path)
@@ -313,30 +318,29 @@ static double now_ns(void)
 
 static void boot(void)
 {
-    om_init();
-    project_load();
-    project_apply();
+    palette_set(APP_PALETTE);                       /* as the device does at boot */
+    app_init();
     lcd_fill(0, 0, 240, 240, 0);
-    ui_init();
+    app_ui_init();
 }
 
 static void run_ms(uint32_t ms)
 {
-    static int32_t blk[512];
+    static int32_t blk[2 * APP_BLOCK];
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
         now_ms++;
-        while (audio_due_ms <= (double)now_ms) {      /* 256-frame blocks, as the device renders them */
+        while (audio_due_ms <= (double)now_ms) {      /* APP_BLOCK-frame blocks, as the device renders them */
             double t0 = now_ns(), dt;
-            om_render(blk, 256, master);
-#ifdef OM_WEB
-            web_audio(blk, 256);
+            app_render(blk, APP_BLOCK, master);
+#ifdef PLAT_WEB
+            web_audio(blk, APP_BLOCK);
 #endif
             dt = now_ns() - t0;
             render_ns_total += dt;
-            render_budget_ns_total += 256.0 * 1e9 / 44100.0;
-            cpu_pct = (uint32_t)(100.0 * dt / (256.0 * 1e9 / 44100.0));
-            for (k = 0; k < 256; k++) {
+            render_budget_ns_total += APP_BLOCK * 1e9 / 44100.0;
+            cpu_pct = (uint32_t)(100.0 * dt / (APP_BLOCK * 1e9 / 44100.0));
+            for (k = 0; k < APP_BLOCK; k++) {
                 float l = (float)blk[2 * k] / 8388608.0f, r = (float)blk[2 * k + 1] / 8388608.0f;
                 int16_t s[2];
                 if (fabsf(l) > peak_out)
@@ -350,7 +354,7 @@ static void run_ms(uint32_t ms)
                     wav_frames++;
                 }
             }
-            audio_due_ms += 256.0 * 1000.0 / 44100.0;
+            audio_due_ms += APP_BLOCK * 1000.0 / 44100.0;
         }
         if (sim_listen && now_ms % 2000u == 0) {        /* the reader's HELLO, as it sends it */
             static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
@@ -358,9 +362,9 @@ static void run_ms(uint32_t ms)
         }
         if (now_ms >= ui_due) {
             ui_due = now_ms + 16;
-            ui_frame();
+            app_frame();
         } else {
-            ui_input_only();
+            app_input_only();
         }
     }
 }
@@ -391,48 +395,16 @@ static int key_of(const char *s)
 static int expect(const char *what, const char *val)
 {
     int got;
-    if (!strcmp(what, "playing"))
-        got = om_playing;
-    else if (!strcmp(what, "view"))
-        got = ui.view;
-    else if (!strcmp(what, "root"))
-        got = ui.root;
-    else if (!strcmp(what, "type"))
-        got = ui.type;
-    else if (!strcmp(what, "pad"))
-        got = ui.pad;
-    else if (!strcmp(what, "hold"))
-        got = proj.hold;
-    else if (!strcmp(what, "sync"))
-        got = proj.sync;
-    else if (!strcmp(what, "armed"))
-        got = ui.armed;
-    else if (!strcmp(what, "dirty"))
-        got = ui.dirty;
-    else if (!strcmp(what, "store_writes"))
+    if (!strcmp(what, "store_writes"))
         got = (int)store_writes;
     else if (!strcmp(what, "clocks_out"))
         got = (int)clock_out_count;
-    else if (!strcmp(what, "step"))
-        got = om_step;
-    else if (!strcmp(what, "ext"))
-        got = om_ext;
     else if (!strcmp(what, "midi_out"))
         got = (int)midi_out_count;
-    else if (!strcmp(what, "chord_level"))
-        got = (int)(om_chord_level * 100.0f);
-    else if (!strcmp(what, "bass_level"))
-        got = (int)(om_bass_level * 100.0f);
-    else if (!strncmp(what, "par", 3))            /* parN: parameter N (omni.h P_*) */
-        got = proj.par[atoi(what + 3)];
-    else if (!strncmp(what, "padroot", 7))
-        got = proj.pad_root[atoi(what + 7)];
-    else if (!strncmp(what, "padtype", 7))
-        got = proj.pad_type[atoi(what + 7)];
-    else if (!strncmp(what, "strnote", 7))         /* strnoteS: string S's note */
-        got = om_str_note[atoi(what + 7)];
-    else if (!strncmp(what, "strlevel", 8))        /* strlevelS: string S's envelope x 100 */
-        got = (int)(om_str_level[atoi(what + 8)] * 100.0f);
+#ifdef APP_HOST_EXPECT
+    else if (app_expect(what, &got))              /* the app's own state (app.h) */
+        ;
+#endif
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
         double db = 20.0 * log10(peak_out > 1e-9f ? peak_out : 1e-9f);
         int bad = what[8] == 'm' && what[9] == 'a' ? db > atof(val) : db < atof(val);
@@ -459,15 +431,18 @@ static int expect(const char *what, const char *val)
     return 0;
 }
 
-#ifndef OM_WEB
+#ifndef PLAT_WEB
 int main(int argc, char **argv)
 {
     FILE *sc;
     char line[512], out[400];
     const char *dir = argc > 2 ? argv[2] : ".";
     int lineno = 0, fails = 0;
+    for (lineno = 0; lineno < OBJ_NOBJ; lineno++)
+        store_len[lineno] = -1;
+    lineno = 0;
     if (argc < 2) {
-        fprintf(stderr, "usage: omni_host SCRIPT [OUTDIR]\n");
+        fprintf(stderr, "usage: %s SCRIPT [OUTDIR]\n", argv[0]);
         return 2;
     }
     sc = fopen(argv[1], "r");
@@ -477,8 +452,8 @@ int main(int argc, char **argv)
     }
     snprintf(out, sizeof out, "%s/midi_out.txt", dir);
     midi_log = fopen(out, "w");
-    if (getenv("OMNI_SAID_LOG")) {                       /* a reader listens from the start, quietly: the log only */
-        said_log_f = fopen(getenv("OMNI_SAID_LOG"), "a");
+    if (getenv("FM1B_SAID_LOG")) {                       /* a reader listens from the start, quietly: the log only */
+        said_log_f = fopen(getenv("FM1B_SAID_LOG"), "a");
         sim_listen = 1;
         said_print = 0;
     }
@@ -549,9 +524,9 @@ int main(int argc, char **argv)
                 return 2;
             }
             enc_acc[e] += atoi(b);
-            accel_off = 1;
+            plat_host_exact = 1;
             run_ms(1);
-            accel_off = 0;
+            plat_host_exact = 0;
         } else if (!strcmp(cmd, "master"))
             master = (uint32_t)atoi(a);
         else if (!strcmp(cmd, "midi")) {
@@ -584,7 +559,9 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);
         else if (!strcmp(cmd, "reboot")) {
-            memset(&proj, 0, sizeof proj);
+#ifdef APP_HOST_REBOOT
+            app_host_reboot();                  /* the app forgets what RAM would (app.h) */
+#endif
             boot();
         } else if (!strcmp(cmd, "listen")) {
             static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER};
@@ -594,7 +571,11 @@ int main(int argc, char **argv)
             ann_frame(HELLO, sizeof HELLO, now_ms);
             run_ms(40);
         } else if (!strcmp(cmd, "speakdump")) {        /* every screen's text for a screen reader, to stdout */
-            speak_dump();
+#ifdef APP_HOST_SPEAKDUMP
+            app_speak_dump();
+#else
+            printf("speakdump: this app has none (app_speak_dump)\n");
+#endif
         } else if (!strcmp(cmd, "where")) {
             static const uint8_t WHERE[] = {ANN_H0, ANN_H1, ANN_H2, ANN_WHERE};
             ann_frame(WHERE, sizeof WHERE, now_ms);
@@ -630,4 +611,4 @@ int main(int argc, char **argv)
            fails ? ", EXPECTATIONS FAILED" : "");
     return fails ? 1 : 0;
 }
-#endif /* OM_WEB */
+#endif /* PLAT_WEB */

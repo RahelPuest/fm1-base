@@ -37,22 +37,10 @@
 
 static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIMER5 ISR) */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
-static inline int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 #include "plat.h"
 #include "app.h"
-#ifndef APP_NAME
-#define APP_NAME "TEMPLATE"
-#endif
-#ifndef APP_SPLASH_RGB
-#define APP_SPLASH_RGB RGB(242, 120, 72)   /* the name on the splash screen */
-#endif
-#ifndef APP_VERSION
-#define APP_VERSION "DEV"
-#endif
-#ifndef APP_BLOCK
-#define APP_BLOCK 256u
-#endif
+#include "fm1b_config.h"          /* APP_NAME, APP_VERSION, APP_BLOCK ...: the app's, or the defaults */
 #define HALF_FRAMES APP_BLOCK     /* the audio half, as felucca-bsp's usb.c expects it */
 
 #define FELUCCA_OTA 1             /* M-UPGRADE update entry: keeps the web installer working */

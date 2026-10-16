@@ -251,7 +251,7 @@ static void fm1_main(void)
             ota_boot_cleanup();
     }
     lcd_init();
-    palette_set(1);
+    palette_set(APP_PALETTE);
     splash();
     if (fm1b_dbg.magic != DBG_MAGIC) {
         memset(&fm1b_dbg, 0, sizeof fm1b_dbg);

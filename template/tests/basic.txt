@@ -1,0 +1,48 @@
+# The template in the host simulator: tools/build.py template --host, then
+#   template/build/host/template_host template/tests/basic.txt template/build/host
+wait 600
+shot boot.png
+key 7 down
+wait 50
+expect note 60
+expect midi_out 1
+shot key.png
+key 7 up
+wait 50
+expect note -1
+tap OCT+
+wait 30
+expect octave 1
+expect dirty 1
+turn PRESET 1
+wait 30
+expect wave 1
+turn K3 3
+wait 300
+expect turns5 3
+press FX
+wait 30
+shot controls.png
+release FX
+tap SAVE
+wait 30
+expect dirty 0
+expect store_writes 1
+reboot
+wait 600
+expect octave 1
+expect wave 1
+midi 90 3C 64
+wait 30
+expect note 60
+wav note.wav
+wait 200
+wavstop
+expect peak_db_min -30
+midi 80 3C 00
+listen
+wait 100
+said TEMPLATE. OCTAVE +1. WAVE TRIANGLE
+tap REC
+wait 30
+said BUTTON REC

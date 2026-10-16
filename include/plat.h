@@ -24,6 +24,11 @@ enum { B_FX, B_SEL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B
 enum { EN_SELECT, EN_ALGO, EN_PRESET, EN_K1, EN_K2, EN_K3, EN_K4, NE };
 
 #define NKEYS 27                       /* F3 .. G5 */
+/* key k by colour: the 16 white keys and the 11 black keys, left to right (initialisers for a uint8_t array) */
+#define PLAT_WHITE_KEYS {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26}
+#define PLAT_BLACK_KEYS {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25}
+
+static inline int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 uint32_t plat_ms(void);
 uint32_t plat_buttons(void);           /* held: bit B_* */

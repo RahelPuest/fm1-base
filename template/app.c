@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
-/* The template app: the keys play a voice and go out over USB-MIDI, MIDI in plays it too, K1 sets the octave,
- * K2 the wave, MASTER the volume, SAVE stores the settings. One of each thing the platform offers, kept short.
- * Part of the unity build (device/unity.c, host/plat_host.c), after the platform: gfx.c and announce.c are in scope. */
+/* The template app: every control on the screen as it arrives, by the name the app knows it by (plat.h B_*, EN_*,
+ * the keys), and a few of them doing something: the keys play a voice and go out over USB-MIDI (MIDI in plays it
+ * too), OCT- / OCT+ set the octave, PRESET the wave, MASTER the volume, SAVE stores the settings. One of each thing
+ * the platform offers, kept short. Part of the unity build (device/unity.c, host/plat_host.c), after the platform:
+ * gfx.c and announce.c are in scope. */
 #include "fastmath.h"
 
 #define SET_MAGIC 0x54504C31u            /* "TPL1": the settings record; another magic loads defaults */
@@ -16,6 +18,10 @@ static settings_t set;
 static uint8_t set_dirty;                /* changed since the last save: SAVE is lit */
 
 static const char *const WAVE_NAME[] = {"SINE", "TRIANGLE"};
+/* the controls by their names in plat.h, in its order */
+static const char *const BTN_NAME[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ",
+                                         "PLAY", "REC", "OCT-", "OCT+"};
+static const char *const ENC_NAME[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
 
 /* ------------------------------------------------------------------ voice --- */
 /* one voice, the last note wins; the main loop and MIDI in set it, the audio interrupt plays it */
@@ -87,14 +93,40 @@ void app_init(void)
 static struct {
     char msg[2][24];                     /* a short message over the header */
     uint32_t msg_until;
-    uint32_t keys;                       /* keys held at the last input */
+    uint32_t keys, btn;                  /* held at the last input */
+    int32_t turns[NE];                   /* detents since boot, per encoder */
+    uint32_t turned_at[NE];              /* when each was last turned: it shows lit for a moment */
     uint8_t redraw;
 } ui;
+
+static void text_cat(char *d, const char *s)
+{
+    while (*d)
+        d++;
+    while (*s)
+        *d++ = *s++;
+    *d = 0;
+}
+
+static void int_text(int32_t v, char *b)     /* signed, no padding */
+{
+    char t[12];
+    int n = 0;
+    uint32_t u = (uint32_t)(v < 0 ? -v : v);
+    do
+        t[n++] = (char)('0' + u % 10u);
+    while ((u /= 10u) && n < 11);
+    if (v < 0)
+        *b++ = '-';
+    while (n)
+        *b++ = t[--n];
+    *b = 0;
+}
 
 void app_say(const char *a, const char *b)
 {
     uint32_t i;
-    char t[48], *p = t;
+    char t[48];
     for (i = 0; i < 23u && a && a[i]; i++)
         ui.msg[0][i] = a[i];
     ui.msg[0][i] = 0;
@@ -104,36 +136,65 @@ void app_say(const char *a, const char *b)
     ui.msg_until = plat_ms() + 1300u;
     ui.redraw = 1;
     if (ann_on()) {                          /* and to a screen reader (announce.c, fm1-reader) */
-        for (i = 0; ui.msg[0][i]; i++)
-            *p++ = ui.msg[0][i];
-        if (ui.msg[1][0])
-            *p++ = ' ';
-        for (i = 0; ui.msg[1][i]; i++)
-            *p++ = ui.msg[1][i];
-        *p = 0;
+        t[0] = 0;
+        text_cat(t, ui.msg[0]);
+        if (ui.msg[1][0]) {
+            text_cat(t, " ");
+            text_cat(t, ui.msg[1]);
+        }
         ann_say(t, 0, ANN_NOW);
     }
+}
+
+static void octave_text(char *t)
+{
+    t[0] = set.octave < 0 ? '-' : '+';
+    t[1] = (char)('0' + (set.octave < 0 ? -set.octave : set.octave));
+    t[2] = 0;
+}
+
+/* a screen reader that has just started listening (or asks) hears the whole screen */
+static void speak(void)
+{
+    char t[64], o[4];
+    if (ann_on() && ann_where()) {
+        octave_text(o);
+        t[0] = 0;
+        text_cat(t, APP_NAME ". OCTAVE ");
+        text_cat(t, o);
+        text_cat(t, ". WAVE ");
+        text_cat(t, WAVE_NAME[set.wave]);
+        ann_say(t, 0, ANN_NOW);
+    }
+    ann_tick(plat_ms());
 }
 
 static void note_name(int32_t note, char *b)
 {
     static const char *const N[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    const char *s = N[note % 12];
-    int32_t oct = note / 12 - 1;
-    while (*s)
-        *b++ = *s++;
-    if (oct < 0) {
-        *b++ = '-';
-        oct = -oct;
-    }
-    *b++ = (char)('0' + oct);
-    *b = 0;
+    char o[12];
+    b[0] = 0;
+    text_cat(b, N[note % 12]);
+    int_text(note / 12 - 1, o);
+    text_cat(b, o);
+}
+
+static void octave_step(int32_t d)
+{
+    int32_t o = clamp(set.octave + d, -2, 2);
+    char t[4];
+    if (o == set.octave)
+        return;
+    voice_note = -1;                         /* a key held across the change would not find its note off */
+    set.octave = (int8_t)o;
+    set_dirty = 1;
+    octave_text(t);
+    app_say("OCTAVE", t);
 }
 
 static void input(void)
 {
     uint32_t keys = plat_keys(), btn = plat_buttons(), k;
-    static uint32_t btn_was;
     int32_t e;
     for (k = 0; k < NKEYS; k++) {            /* key 0 is F3 (MIDI 53) */
         uint32_t bit = 1u << k;
@@ -146,92 +207,130 @@ static void input(void)
             plat_midi_out(0x08u | 0x80u << 8 | (uint32_t)note << 16);
         }
     }
-    if (keys != ui.keys)
+    for (k = 0; k < NB; k++) {               /* a button pressed: its name, and what it does here */
+        uint32_t bit = 1u << k;
+        if (!(btn & bit) || (ui.btn & bit))
+            continue;
+        if (k == B_OCTDN)
+            octave_step(-1);
+        else if (k == B_OCTUP)
+            octave_step(1);
+        else if (k == B_SAVE) {
+            if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0) {
+                set_dirty = 0;
+                app_say("SAVED", "");
+            } else {
+                app_say("SAVE", "FAILED");
+            }
+        } else {
+            app_say("BUTTON", BTN_NAME[k]);
+        }
+    }
+    for (k = 0; k < NE; k++) {               /* an encoder turned: its count; PRESET also changes the wave */
+        char t[12];
+        if ((e = plat_enc((int)k)) == 0)
+            continue;
+        ui.turns[k] += e;
+        ui.turned_at[k] = plat_ms();
+        ui.redraw = 1;
+        if (k == EN_PRESET) {
+            set.wave ^= 1u;
+            set_dirty = 1;
+            app_say("WAVE", WAVE_NAME[set.wave]);
+        } else {
+            int_text(ui.turns[k], t);
+            app_say(ENC_NAME[k], t);
+        }
+    }
+    if (keys != ui.keys || btn != ui.btn)
         ui.redraw = 1;
     ui.keys = keys;
-    if ((e = plat_enc(EN_K1)) != 0) {
-        int32_t o = clamp(set.octave + (e > 0 ? 1 : -1), -2, 2);
-        if (o != set.octave) {
-            char t[4] = {o < 0 ? '-' : '+', (char)('0' + (o < 0 ? -o : o)), 0, 0};
-            set.octave = (int8_t)o;
-            set_dirty = 1;
-            app_say("OCTAVE", t);
-        }
-    }
-    if ((e = plat_enc(EN_K2)) != 0) {
-        set.wave ^= 1u;
-        set_dirty = 1;
-        app_say("WAVE", WAVE_NAME[set.wave]);
-    }
-    if ((btn & (1u << B_SAVE)) && !(btn_was & (1u << B_SAVE))) {
-        if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0) {
-            set_dirty = 0;
-            app_say("SAVED", "");
-        } else {
-            app_say("SAVE", "FAILED");
-        }
-    }
-    btn_was = btn;
+    ui.btn = btn;
     plat_glow(1);                            /* the unlit buttons glow, readable in the dark */
-    plat_leds(set_dirty ? 1u << B_SAVE : 0u, keys);
+    plat_leds(btn | (set_dirty ? 1u << B_SAVE : 0u), keys);
 }
 
 void app_input_only(void) { input(); }
+
+static void cell(int32_t x, int32_t y, int32_t w, const char *s, int on)   /* a labelled box, lit when on */
+{
+    cv_rect(x, y, w, 18, on ? C_HI : C_LINE);
+    cv_text(x + (w - text_w(&FONT_XS, s)) / 2, y + 2, &FONT_XS, s, on ? C_BLACK : C_GRAY);
+}
 
 static void draw(void)
 {
     char t[24];
     int32_t note = voice_note;
-    uint32_t pct = plat_master() * 100u / 4096u;
-    /* the header: the name, or a message for a moment */
+    uint32_t i, now = plat_ms(), pct = plat_master() * 100u / 4096u;
+    static const uint8_t WK[16] = PLAT_WHITE_KEYS, BK[11] = PLAT_BLACK_KEYS;
+    /* the header: the name and the note, or a message for a moment */
     cv_begin(240, 32, C_BLACK);
-    if (plat_ms() < ui.msg_until) {
+    if (now < ui.msg_until) {
         int32_t x = cv_text(10, 6, &FONT_B, ui.msg[0], C_WHITE);
         cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
     } else {
         cv_text(10, 6, &FONT_B, APP_NAME, C_WHITE);
+        if (note >= 0) {
+            note_name(note, t);
+            cv_text(230 - text_w(&FONT_B, t), 6, &FONT_B, t, C_HI);
+        }
     }
     cv_blit(0, 0);
-    /* the note, large, and the settings */
+    /* the buttons, 4 to a row, lit while held; the encoders and their counts, lit for a moment after a turn */
     cv_begin(240, 144, C_BLACK);
-    if (note >= 0) {
-        note_name(note, t);
-        cv_text((240 - text_w(&FONT_L, t)) / 2, 20, &FONT_L, t, C_HI);
-    } else {
-        cv_text((240 - text_w(&FONT_S, "PLAY A KEY")) / 2, 32, &FONT_S, "PLAY A KEY", C_DIM);
+    for (i = 0; i < NB; i++)
+        cell(4 + (int32_t)(i % 4u) * 58, (int32_t)(i / 4u) * 21, 56, BTN_NAME[i], (ui.btn >> i) & 1u);
+    for (i = 0; i < NE; i++) {
+        int32_t x = 4 + (int32_t)(i % 4u) * 58, y = 88 + (int32_t)(i / 4u) * 28;
+        int lit = ui.turned_at[i] && now - ui.turned_at[i] < 300u;
+        cv_text(x, y, &FONT_XS, ENC_NAME[i], lit ? C_HI : C_GRAY);
+        int_text(ui.turns[i], t);
+        cv_text(x, y + 13, &FONT_XS, t, lit ? C_WHITE : C_DIM);
     }
-    t[0] = set.octave < 0 ? '-' : '+';
-    t[1] = (char)('0' + (set.octave < 0 ? -set.octave : set.octave));
-    t[2] = 0;
-    cv_text(10, 80, &FONT_S, "K1 OCTAVE", C_GRAY);
-    cv_text(150, 80, &FONT_S, t, C_HI);
-    cv_text(10, 100, &FONT_S, "K2 WAVE", C_GRAY);
-    cv_text(150, 100, &FONT_S, WAVE_NAME[set.wave], C_HI);
-    cv_text(10, 120, &FONT_S, "MASTER", C_GRAY);
-    t[0] = (char)('0' + pct / 100u % 10u);
-    t[1] = (char)('0' + pct / 10u % 10u);
-    t[2] = (char)('0' + pct % 10u);
-    t[3] = '%';
-    t[4] = 0;
-    cv_text(150, 120, &FONT_S, pct >= 100u ? t : t + (pct >= 10u ? 1 : 2), C_HI);
-    cv_blit(0, 48);
+    cv_blit(0, 36);
+    /* the keys, black above white, lit while held; then the settings */
+    cv_begin(240, 60, C_BLACK);
+    for (i = 0; i < 16u; i++)
+        cv_rect(4 + (int32_t)i * 14, 14, 13, 12, (ui.keys >> WK[i]) & 1u ? C_HI : C_DIM);
+    for (i = 0; i < 11u; i++) {
+        static const uint8_t AT[11] = {0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14};   /* the white key each one follows */
+        cv_rect(4 + (int32_t)AT[i] * 14 + 8, 0, 11, 12, (ui.keys >> BK[i]) & 1u ? C_HI : C_LINE);
+    }
+    octave_text(t);
+    cv_text(4, 34, &FONT_XS, "OCT", C_GRAY);
+    cv_text(30, 34, &FONT_XS, t, C_HI);
+    cv_text(64, 34, &FONT_XS, "PRESET", C_GRAY);
+    cv_text(112, 34, &FONT_XS, WAVE_NAME[set.wave], C_HI);
+    cv_text(178, 34, &FONT_XS, "VOL", C_GRAY);
+    int_text((int32_t)pct, t);
+    text_cat(t, "%");
+    cv_text(204, 34, &FONT_XS, t, C_HI);
+    cv_blit(0, 180);
 }
 
 void app_ui_init(void)
 {
     lcd_fill(0, 0, 240, 240, C_BLACK);
     ui.redraw = 1;
-    app_say(APP_NAME, "READY");
 }
 
 void app_frame(void)
 {
-    static uint32_t last_pct;
-    uint32_t pct = plat_master() * 100u / 4096u;
+    static uint32_t last_pct, lit_until;
+    uint32_t i, now = plat_ms(), pct = plat_master() * 100u / 4096u;
     input();
-    if (pct != last_pct || (ui.msg_until && plat_ms() >= ui.msg_until)) {
+    speak();
+    for (i = 0; i < NE; i++)                 /* an encoder's light goes out */
+        if (ui.turned_at[i] && now - ui.turned_at[i] < 400u && now > lit_until)
+            lit_until = ui.turned_at[i] + 300u;
+    if (lit_until && now >= lit_until) {
+        lit_until = 0;
+        ui.redraw = 1;
+    }
+    if (pct != last_pct || (ui.msg_until && now >= ui.msg_until)) {
         last_pct = pct;
-        if (plat_ms() >= ui.msg_until)
+        if (now >= ui.msg_until)
             ui.msg_until = 0;
         ui.redraw = 1;
     }
@@ -240,3 +339,22 @@ void app_frame(void)
         draw();
     }
 }
+
+#ifdef PLAT_HOST
+int app_expect(const char *what, int *got)
+{
+    if (!strcmp(what, "octave"))
+        *got = set.octave;
+    else if (!strcmp(what, "wave"))
+        *got = set.wave;
+    else if (!strcmp(what, "note"))
+        *got = voice_note;
+    else if (!strcmp(what, "dirty"))
+        *got = set_dirty;
+    else if (!strncmp(what, "turns", 5))    /* turnsN: encoder N's count (plat.h EN_*) */
+        *got = ui.turns[atoi(what + 5) % NE];
+    else
+        return 0;
+    return 1;
+}
+#endif

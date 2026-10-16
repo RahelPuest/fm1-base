@@ -5,6 +5,7 @@
 """Build an fm1-base firmware: the app, the update loader (felucca-bsp's) and an installable .fwsc package.
 
   tools/build.py APP_DIR [--release X.Y[.Z][-suffix]]
+  tools/build.py APP_DIR --host        the host simulator instead: APP_DIR/build/host/NAME_host (cc, no toolchain)
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -373,12 +374,31 @@ def mmio_check():
     return errors
 
 
+def build_host():
+    """the app against a simulated FM-1 (host/plat_host.c), with this machine's compiler; -ffp-contract=off like the
+    device (no fused multiply-add), so the samples match"""
+    out = OUT / "host"
+    out.mkdir(parents=True, exist_ok=True)
+    exe = out / (NAME + "_host")
+    cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST",
+           *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN)),
+           "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    sys.stderr.write(r.stderr)
+    if r.returncode:
+        raise SystemExit("build: the host simulator did not compile")
+    print(f"host     {exe}")
+    return 0
+
+
 def main():
     global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--host", action="store_true", help="build the host simulator instead of the firmware")
     a = ap.parse_args()
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
@@ -391,6 +411,9 @@ def main():
         raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
     PRODUCT = prefix + "00"
     name = NAME + ".fwsc"
+    if a.host:
+        generate()
+        return build_host()
     if a.release:
         # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
         # model the update tools match on; the digits after the underscore are the firmware's.
