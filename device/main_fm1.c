@@ -27,7 +27,10 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
     fm1b_dbg.in_audio = 1;
 #if FELUCCA_UAC
-    uac_render_start();
+    if (!ble_quiet)                                 /* (USB audio's code is in the flash too: none while the radio
+                                                     * calibrates, when a fetch can come back corrupted; a CTL-1 crashed
+                                                     * so, returning to a garbled address, 0.6 s into each start) */
+        uac_render_start();
 #endif
     {
         uint32_t k;
@@ -43,6 +46,8 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             } else {
                 app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
             }
+            if (ble_quiet)
+                continue;
 #if FELUCCA_UAC_OUT
             uac_play(o + 2u * k, REND_FRAMES, master_pos * master_pos >> 12);   /* the computer's audio, at MASTER */
 #endif
