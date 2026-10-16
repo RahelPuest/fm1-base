@@ -296,6 +296,13 @@ void shim_bt_event(int from, const void *event, int len)
     ble_events++;
     if (from == 3 && e && e->event == 3 && ble_state == BLE_STARTING) {   /* BT_EVENT_FROM_CON, BT_STATUS_INIT_OK */
         shim_log("BT ready: advertising as FM-1");
+        {
+            extern uint32_t shim_heap_peak;
+            char b[32] = "heap peak ", *q = put_dec(b + 10, shim_heap_peak);
+            q[0] = ' '; q[1] = 'o'; q[2] = 'f'; q[3] = ' ';
+            put_dec(q + 4, 24u * 1024u);
+            shim_log(b);
+        }
         bt_ble_init();
         ble_state = BLE_READY;
     }

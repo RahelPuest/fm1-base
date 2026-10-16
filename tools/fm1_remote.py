@@ -14,6 +14,7 @@ or by a program (an agent). Needs mido with python-rtmidi.
     screen                                  what is on the screen, in words (the screen reader's channel)
     log                                     the last crash and Bluetooth's log (both survive a restart)
     release-all                             every button and key up, MASTER the pot's own
+    reboot                                  restart it (as intended: Bluetooth starts again); then waits for USB
   e.g.  tools/fm1_remote.py tap REC wait 800 screen
 
 The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...) and log_frame (F0 7D 4C 47), and the screen
@@ -131,6 +132,18 @@ class FM1:
                 for f in self.frames(LG, 2.0, until=lambda f: f == b"end"):
                     if f != b"end":
                         print("log:", f.decode("latin1", "replace"))
+                i += 1
+            elif c == "reboot":
+                self.sysex(LC + [5])
+                time.sleep(1.0)
+                self.out.close()
+                self.inp.close()
+                for _ in range(40):
+                    time.sleep(0.5)
+                    if [n for n in mido.get_output_names() if "FM-1" in n]:
+                        break
+                time.sleep(0.5)
+                self.__init__()
                 i += 1
             elif c == "release-all":
                 self.btn = self.keys = 0

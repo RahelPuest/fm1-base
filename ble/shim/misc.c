@@ -53,6 +53,7 @@ static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
 typedef struct blk { uint32_t size; struct blk *next; } blk_t;   /* size in bytes, header included */
 static blk_t *free_list;
 static int heap_ready;
+uint32_t shim_heap_used, shim_heap_peak;         /* bytes handed out now, and the most ever (the log, at ready) */
 
 static void heap_init(void)
 {
@@ -81,6 +82,9 @@ void *malloc(size_t n)
             } else {
                 *pp = b->next;
             }
+            shim_heap_used += b->size;
+            if (shim_heap_used > shim_heap_peak)
+                shim_heap_peak = shim_heap_used;
             shim_irq_restore(f);
             return (uint8_t *)b + 4;
         }
@@ -97,6 +101,7 @@ void free(void *p)
         return;
     f = shim_irq_save();
     b = (blk_t *)((uint8_t *)p - 4);
+    shim_heap_used -= b->size;
     for (pp = &free_list; *pp && *pp < b; pp = &(*pp)->next)    /* address order: merge neighbours */
         ;
     b->next = *pp;

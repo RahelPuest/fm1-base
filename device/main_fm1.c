@@ -244,6 +244,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
  *   2 k0 k1 k2 k3    the keys held (bit k = key k, seven bits a byte, low first)
  *   3 role delta     an encoder turned (EN_*; delta - 64 detents)
  *   4 lo hi          MASTER's position (0..4096, seven bits a byte; 4097 or more: the pot's own again)
+ *   5                restart (an intentional one: Bluetooth starts again, the boot guard is not counted)
  * Each is added to the panel's own input (plat_fm1.c remote); the answer is F0 7D 4C 43 op F7. */
 static int remote_frame(const uint8_t *p, uint32_t n)
 {
@@ -269,6 +270,13 @@ static int remote_frame(const uint8_t *p, uint32_t n)
             uint32_t v = (uint32_t)p[4] | (uint32_t)p[5] << 7;
             remote.master = v > 4096u ? -1 : (int32_t)v;
         }
+        break;
+    case 5:                                         /* restart, as an intentional one (Bluetooth starts again) */
+        ble_clean_exit();
+        bootguard.pending = 0;
+        usb_detach();
+        fm1_delay_ms(30);
+        fm1_reboot();
         break;
     default:
         return 1;
