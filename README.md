@@ -34,18 +34,68 @@ parts it has.
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
 
-Bluetooth starts at every power-on, as on M-VAVE's firmware, unless the last Bluetooth run crashed. A firmware
-that lets the player turn it off keeps that as a setting, calls `plat_ble_enable(0)` / `plat_ble_enable(1)`
-when it changes, and tells the platform whether to start it at power-on with `APP_BLE_AT_BOOT` in app.h (an
-expression, e.g. `(set.bluetooth != 0)`). Off ends every link and stops advertising and scanning: the radio is quiet.
-Its manual should say where the setting is (the template's: for details, see template/docs/MANUAL.md).
+## Bluetooth and WiFi
 
-WiFi is off until the app turns it on (`plat_wifi_on(1)`); then it joins the networks it joined before, kept in the
-app's store object `OBJ_WIFI`. The app's network code (the files in `net`) is built as the SDK builds code that
-talks lwIP, includes `lwip/sockets.h`, and runs in a task of its own (`plat_net_task`): a socket call waits, and the
-main loop must not. A WiFi build has fm1-radio's memory map (`device/app_wifi.ld`): the WiFi library's buffers take
-most of the RAM and the pool, so its canvas is smaller (`APP_CANVAS_PX` in app.h) and USB audio is best left out.
-Passwords come over USB: `tools/fm1_remote.py wifi join SSID PASSWORD`. For a working example, see `examples/wifi`.
+A firmware has Bluetooth or WiFi, not both: each fills most of what the FM-1 has (the chip has no external RAM),
+and together they don't fit. Each needs JieLi's AC79 SDK (`$AC79_SDK`) for its libraries; a build without either
+links nothing of JieLi's.
+
+### Turning Bluetooth on
+
+1. In fm1.toml, `ble = true`. Add `ble_central = true` for the FM-1 to connect to MIDI devices too (a keyboard,
+   a controller), beside a computer.
+2. In app.h, give it a store object: `OBJ_BLE` in the app's object enum, and its offset in `APP_STORE_MAP` (the
+   radio's address and pairing are kept there).
+3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
+   `#define APP_BTDEV` to app.h and use lib/btdev.h (the template's REC does).
+
+Bluetooth starts at every power-on, as on M-VAVE's firmware, unless the last Bluetooth run crashed. A firmware
+that lets the player turn it off keeps that as a setting, calls `plat_ble_enable(0)` / `plat_ble_enable(1)` when it
+changes, and tells the platform whether to start it at power-on with `APP_BLE_AT_BOOT` in app.h (an expression,
+e.g. `(set.bluetooth != 0)`). Off ends every link and stops advertising and scanning: the radio is quiet. Its manual
+should say where the setting is (the template's: for details, see template/docs/MANUAL.md).
+`tools/build.py --no-ble` builds the same firmware without Bluetooth (NAME-usb.fwsc).
+
+### Turning WiFi on
+
+1. In fm1.toml, `wifi = true` (and not `ble`). Leave USB audio out (`usb_audio_in = false`, `usb_audio_out =
+   false`): WiFi needs its RAM.
+2. In app.h, two store objects: `OBJ_BLE` (the radio's address and calibration) and `OBJ_WIFI` (the networks
+   kept), with their offsets in `APP_STORE_MAP`; and a smaller canvas, `#define APP_CANVAS_PX (240u * 48u)` (draw
+   the screen in strips 48 rows high or less).
+3. The app's network code goes in its own files, listed in fm1.toml's `net = [...]`: they're built as the SDK
+   builds code that talks lwIP, and include `lwip/sockets.h`. That code runs in a task of its own
+   (`plat_net_task`): a socket call waits, and the main loop must not.
+4. In the app: `plat_wifi_on(1)` turns it on; it joins the networks it joined before (six, the most recent first).
+   `plat_wifi_scan` and `plat_wifi_found` list the networks around, `plat_wifi_join` joins one (kept once joined),
+   `plat_wifi_state` and `plat_wifi_ip` say how far it got. Passwords come over USB:
+   `tools/fm1_remote.py wifi join SSID PASSWORD` (or typed on the keys: Radio has a page for it).
+
+For a working example, see `examples/wifi`; for a whole firmware, fm1-radio.
+
+### What each costs
+
+The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss` (128 KB in a WiFi build), and a
+336 KB pool of RAM for big buffers (304 KB in a WiFi build). Measured on the template (October 2026), in KB:
+
+| | Flash | RAM | Pool |
+| --- | --- | --- | --- |
+| The template without a radio (`--no-ble`) | 77 | 27 | 68 |
+| Bluetooth MIDI with a computer (`ble`) | + 124 | + 45 | + 24 |
+| Bluetooth MIDI devices too (`ble_central`) | + 8 | + 1 | 0 |
+| WiFi (`wifi`, from fm1-radio's measurements) | + about 300 | + about 100 | + about 276 |
+
+- Bluetooth: JieLi's BT controller and stack (the flash), its 24 KB heap and their tables (the RAM), three task
+  stacks of 8 KB (the pool). The template with Bluetooth and devices is 210 KB of flash, 74 of 96 KB of RAM: room
+  for a big app (CTL-1, with a General MIDI synth, is 491 KB).
+- WiFi: JieLi's driver (146 KB), the WPA supplicant (77 KB), lwIP (51 KB), the radio layer, crypto and the shim
+  (25 KB) in the flash; the driver's buffers, lwIP and the shim's task table (about 100 KB) in the RAM; 13 task
+  stacks of 8 KB, a 144 KB heap and lwIP's packet buffers (28 KB) in the pool. That leaves an app about 170 KB of
+  flash, a few KB of RAM and the rest of the heap for its own buffers (`malloc`). `examples/wifi` is 410 KB of
+  flash, 120 of 128 KB of RAM and 299 of 304 KB of pool; fm1-radio (an MP3 decoder, HTTPS, 78 KB of places) is
+  549 KB, 127 KB and 300 KB.
+- In a WiFi build, fm1-base's large font (the splash's name, the panel's screens) can go too:
+  `#define APP_BIG_FONT FONT_M` in app.h saves 20 KB of flash.
 
 ## Development over USB
 
