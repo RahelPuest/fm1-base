@@ -44,7 +44,7 @@ a { color: var(--accent); }
 .lit .btnface { fill: #f28a5a; }
 .lit text.btn { fill: #2a140a; }
 .held .btnface, .held .keyface { stroke: #f28a5a; stroke-width: 3; }
-.latched .btnface { stroke: #6fc3ff; stroke-width: 3; }
+.latched .btnface, .latched .keyface { stroke: #6fc3ff; stroke-width: 3; }
 .keyface { transition: fill .06s; }
 .lit .keyface.white { fill: #f6b48e; }
 .lit .keyface.black { fill: #4cc3b6; }
@@ -100,8 +100,8 @@ kbd { font: 600 .85em ui-monospace, Menlo, monospace; background: var(--card); b
 </div>
 </div>
 <p id="panel-keys" class="sr">Tab moves through the knobs, the buttons, the black keys and the white keys. Arrow keys turn a knob,
-  Page Up and Page Down faster. Space or Enter holds a button or key down while you hold it; Shift and Enter keeps a button down
-  until you press it again.</p>
+  Page Up and Page Down faster. Space or Enter holds a button or key down while you hold it; Shift and Enter keeps it down
+  until you press it again (with a mouse: Shift-click or right-click).</p>
 
 <div class="bar">
   <span id="status" role="status">Off. Sound starts when you switch it on.</span>
@@ -251,11 +251,11 @@ for (const [label, k] of Object.entries(knobs)) {
 }
 for (const lbl of ["OCT-", "OCT+", ...ROW1, ...ROW2])
   hit(buttons[lbl], gButtons, { role: "button", "aria-label": buttons[lbl].name, "aria-pressed": "false"});
-BLACK_K.forEach((n) => hit(keys[n], gBlack, { role: "button", "aria-label": keys[n].name }));
-WHITE_K.forEach((n) => hit(keys[n], gWhite, { role: "button", "aria-label": keys[n].name }));
+BLACK_K.forEach((n) => hit(keys[n], gBlack, { role: "button", "aria-label": keys[n].name, "aria-pressed": "false" }));
+WHITE_K.forEach((n) => hit(keys[n], gWhite, { role: "button", "aria-label": keys[n].name, "aria-pressed": "false" }));
 
 // ---------------------------------------------------------------- state and input
-let node = null, gain = null, btnMask = 0, keyMask = 0, latched = 0;
+let node = null, gain = null, btnMask = 0, keyMask = 0, latched = 0, keyLatched = 0;   // latched: held down until pressed again
 const btnHeldBy = new Map(), keyHeldBy = new Map();      // pointer / key id -> bit
 function send(m) { if (node) node.port.postMessage(m); }
 function syncButtons() {
@@ -271,10 +271,15 @@ function syncButtons() {
   }
 }
 function syncKeys() {
-  let m = 0;
+  let m = keyLatched;
   for (const k of keyHeldBy.values()) m |= 1 << k;
   if (m !== keyMask) { keyMask = m; send({ type: "keys", mask: m }); }
-  keys.forEach((k, i) => k.g.classList.toggle("held", !!(m & (1 << i))));
+  keys.forEach((k, i) => {
+    k.g.classList.toggle("held", !!(m & (1 << i)));
+    k.g.classList.toggle("latched", !!(keyLatched & (1 << i)));
+    const pressed = m & (1 << i) ? "true" : "false";
+    if (k.hit && k.hit.getAttribute("aria-pressed") !== pressed) k.hit.setAttribute("aria-pressed", pressed);
+  });
 }
 
 for (const b of Object.values(buttons)) {
@@ -289,8 +294,12 @@ for (const b of Object.values(buttons)) {
   });
 }
 keys.forEach((k, i) => {
+  k.hit.addEventListener("contextmenu", (e) => e.preventDefault());
   k.hit.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    // Shift-click or right-click holds a key down until it is clicked again: chords with a mouse
+    if (e.shiftKey || e.button === 2) { keyLatched ^= 1 << i; syncKeys(); return; }
+    if (keyLatched & (1 << i)) { keyLatched &= ~(1 << i); syncKeys(); return; }
     k.hit.setPointerCapture(e.pointerId);
     keyHeldBy.set("p" + e.pointerId, i);
     syncKeys();
@@ -391,13 +400,14 @@ function letGo(id) {
   const wait = 50 - (performance.now() - (at ?? 0));
   if (wait > 0) setTimeout(go, wait); else go();
 }
-// the keyboard on a focused button or key: Space or Enter holds it down while held; Shift+Enter keeps a button down.
+// the keyboard on a focused button or key: Space or Enter holds it down while held; Shift+Enter keeps it down.
 // A screen reader's "activate" is a click with no pointer and no key before it: a short press
 for (const [c, kind] of [...Object.values(buttons).map((b) => [b, "btn"]), ...keys.map((k, i) => [k, i])]) {
   c.hit.addEventListener("pointerdown", () => { c.pointerAt = performance.now(); });
   c.hit.addEventListener("click", (e) => {
     if (!node || performance.now() - (c.pointerAt || -1e9) < 2000) return;
     if (kind === "btn" && latched & (1 << c.bit)) { latched &= ~(1 << c.bit); syncButtons(); return; }
+    if (kind !== "btn" && keyLatched & (1 << kind)) { keyLatched &= ~(1 << kind); syncKeys(); return; }
     holdDown("t", kind === "btn" ? "btn" : "key", kind === "btn" ? c.bit : kind);
     setTimeout(() => letGo("t"), 80);
   });
@@ -406,10 +416,14 @@ for (const [c, kind] of [...Object.values(buttons).map((b) => [b, "btn"]), ...ke
     e.preventDefault(); e.stopPropagation();
     if (e.repeat || !node) return;
     if (kind === "btn" && e.key === "Enter" && e.shiftKey) { latched ^= 1 << c.bit; syncButtons(); return; }
+    if (kind !== "btn" && e.key === "Enter" && e.shiftKey) { keyLatched ^= 1 << kind; syncKeys(); return; }
     if (kind === "btn") {
       if (latched & (1 << c.bit)) { latched &= ~(1 << c.bit); syncButtons(); return; }
       holdDown("f" + e.key, "btn", c.bit);
-    } else holdDown("f" + e.key, "key", kind);
+    } else {
+      if (keyLatched & (1 << kind)) { keyLatched &= ~(1 << kind); syncKeys(); return; }
+      holdDown("f" + e.key, "key", kind);
+    }
   });
   c.hit.addEventListener("keyup", (e) => letGo("f" + e.key));
   c.hit.addEventListener("blur", () => {
