@@ -60,14 +60,15 @@ doesn't start can be recovered too. For details, see felucca-bsp's `tools/fm1_re
 | OCT− · OCT+ | The octave, from −2 to +2. |
 | PRESET | The wave: sine or triangle. |
 | MASTER | The volume. |
-| SAVE | Saves the octave and the wave. SAVE lights while there's something to save. |
+| SAVE | Saves the octave, the wave and Bluetooth on or off. SAVE lights while there's something to save. |
+| REC | Press: find and connect a Bluetooth MIDI device. Hold a second: Bluetooth off or on. For details, see MIDI and audio. |
 | Every other button and knob | Shows its name on the screen, and nothing else. This is where a firmware wires its own. |
 
 ---
 
 ## 4. Saving
 
-Press SAVE to keep the octave and the wave. They come back the next time the FM-1 starts. SAVE stays lit while
+Press SAVE to keep the octave, the wave and whether Bluetooth is on. They come back the next time the FM-1 starts. SAVE stays lit while
 there are changes to save.
 
 ![After OCT+ and PRESET: OCT +1 and PRESET TRIANGLE, SAVE waiting](img/screen-settings.png "OCT+ and PRESET changed, not saved yet")
@@ -82,6 +83,15 @@ The keys send notes, with their velocity, and poly aftertouch out over USB and B
 Over Bluetooth, TEMPLATE advertises as "FM-1". On a Mac, open Audio MIDI Setup, choose Window > Show MIDI Studio,
 click the Bluetooth button, then Connect next to FM-1. On an iPad or iPhone, connect from a music app's Bluetooth
 MIDI settings.
+
+To switch Bluetooth off, hold REC for a second: the screen says BLUETOOTH OFF, and the FM-1 stops advertising
+and drops any connection. Hold REC again to switch it back on. Press SAVE to keep the choice: it stays so the next
+time the FM-1 starts.
+
+To connect TEMPLATE to a Bluetooth MIDI device, such as a keyboard or a controller, put the device in its pairing or
+advertising mode, then press REC: the screen says BLE SCANNING. Turn ALGORITHM to pick the device by its name, and
+press REC again to connect. DEV in the header lights while it's connected, and the bottom line shows the last
+message it sent. Press REC once more to disconnect.
 
 The keys sense how hard they're played, with no change to the FM-1. The 20 lowest keys
 (F3 to C5) give velocity and pressure; the top seven give velocity only.

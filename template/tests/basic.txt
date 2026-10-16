@@ -71,3 +71,23 @@ expect prs >40
 shot touch.png
 key 7 up
 wait 50
+# REC held a second: Bluetooth off (and saved: off after a restart too), then on again
+listen
+wait 1200
+press REC
+wait 1100
+release REC
+wait 50
+said BLUETOOTH OFF
+expect ble 0
+tap SAVE
+wait 30
+reboot
+wait 1200
+expect ble 0
+press REC
+wait 1100
+release REC
+wait 1200
+said BLUETOOTH ON
+expect ble 2

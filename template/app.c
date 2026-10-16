@@ -12,7 +12,8 @@ typedef struct {
     uint32_t magic;
     int8_t octave;                       /* -2 .. +2 */
     uint8_t wave;                        /* 0 sine, 1 triangle */
-    uint8_t rsv[2];
+    uint8_t ble_off;                     /* Bluetooth switched off (REC held); 0, the default: on */
+    uint8_t rsv[1];
 } settings_t;
 static settings_t set;
 static uint8_t set_dirty;                /* changed since the last save: SAVE is lit */
@@ -93,12 +94,13 @@ static void settings_defaults(void)
     set.magic = SET_MAGIC;
     set.octave = 0;
     set.wave = 0;
+    set.ble_off = 0;
 }
 
 void app_init(void)
 {
     if (plat_store_load(OBJ_SETTINGS, &set, sizeof set) != (int)sizeof set || set.magic != SET_MAGIC
-        || set.octave < -2 || set.octave > 2 || set.wave > 1u)
+        || set.octave < -2 || set.octave > 2 || set.wave > 1u || set.ble_off > 1u)
         settings_defaults();
 }
 
@@ -110,6 +112,7 @@ static struct {
     uint8_t vel[NKEYS], prs[NKEYS];      /* each key's last velocity, and its pressure while held */
     int32_t last_key;                    /* the key pressed last: its numbers in the header */
     int32_t pick;                        /* Bluetooth MIDI devices: the one ALGORITHM picks while scanning */
+    uint32_t rec_t;                      /* REC went down (0: not held, or its hold already acted) */
     int32_t turns[NE];                   /* detents since boot, per encoder */
     uint32_t turned_at[NE];              /* when each was last turned: it shows lit for a moment */
     uint8_t redraw;
@@ -224,6 +227,17 @@ static void octave_step(int32_t d)
     app_say("OCTAVE", t);
 }
 
+int template_ble_off(void) { return set.ble_off; }
+
+/* REC held a second: Bluetooth off or on (kept with the settings, so it stays so at the next power-on) */
+static void ble_toggle(void)
+{
+    set.ble_off = (uint8_t)!set.ble_off;
+    set_dirty = 1;
+    plat_ble_enable(!set.ble_off);
+    app_say("BLUETOOTH", set.ble_off ? "OFF" : "ON");
+}
+
 /* REC: a Bluetooth MIDI device (FM1B_BLE_CENTRAL): scan, then connect to the one ALGORITHM picks, then let it go */
 static void ble_device_say(void)
 {
@@ -288,8 +302,8 @@ static void input(void)
             octave_step(-1);
         else if (k == B_OCTUP)
             octave_step(1);
-        else if (k == B_REC && FM1B_BLE_CENTRAL)
-            ble_device_button();
+        else if (k == B_REC && FM1B_BLE)
+            ui.rec_t = plat_ms();                /* a press: on release (a hold switches Bluetooth) */
         else if (k == B_SAVE) {
             if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0) {
                 set_dirty = 0;
@@ -299,6 +313,20 @@ static void input(void)
             }
         } else {
             app_say("BUTTON", BTN_NAME[k]);
+        }
+    }
+    if (FM1B_BLE && ui.rec_t) {             /* REC: held a second, Bluetooth on / off; a press, a device */
+        if (btn >> B_REC & 1u) {
+            if (plat_ms() - ui.rec_t >= 1000u) {
+                ui.rec_t = 0;
+                ble_toggle();
+            }
+        } else {
+            ui.rec_t = 0;
+            if (FM1B_BLE_CENTRAL && !set.ble_off)
+                ble_device_button();
+            else
+                app_say("BUTTON", "REC");
         }
     }
     for (k = 0; k < NE; k++) {               /* an encoder turned: its count; PRESET also changes the wave */
