@@ -15,6 +15,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_manufacturer = "..."   the USB names (felucca-bsp FELUCCA_USB_MANUFACTURER / FELUCCA_USB_PRODUCT)
   usb_product = "..."
   o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR
+  include = ["dsp/lib"]      more include directories, relative to APP_DIR
+  mmio_skip = ["dsp/lib/"]   paths whose numbers are not addresses (a library's tables): the register check skips
+                             its address literals there (still checks casts, asm and register macros)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
@@ -291,7 +294,8 @@ def ble_units():
 
 
 def build_app():
-    flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN)]
+    flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN,
+                                 *(APP / d for d in CONF.get("include", [])))]
     if BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_TRS"):
@@ -437,6 +441,7 @@ def mmio_check():
             break
         regs |= more
     errors = []
+    skip = CONF.get("mmio_skip", [])
     files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"),
              *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts]]
     for f in sorted(files):
@@ -444,6 +449,8 @@ def mmio_check():
             where = f"{f.relative_to(ROOT)}:{no}"
             for rx, what in ((MMIO_LIT, "register/window address"), (MMIO_CAST, "volatile pointer cast"),
                              (MMIO_ASM, "inline asm")):
+                if rx is MMIO_LIT and any(str(f.relative_to(APP)).startswith(s) for s in skip if APP in f.parents):
+                    continue
                 m = rx.search(ln)
                 if m:
                     errors.append(f"{where}: {what} outside the BSP ({m.group(0).strip()}); add a BSP helper")
@@ -461,7 +468,7 @@ def build_host():
     exe = out / (NAME + "_host")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE,
-           *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN)),
+           *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
@@ -479,7 +486,7 @@ def build_web():
     emu.mkdir(parents=True, exist_ok=True)
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
            "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
-           *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", APP, GEN)),
+           *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
     r = subprocess.run(cmd, capture_output=True, text=True)
