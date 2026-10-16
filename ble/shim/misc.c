@@ -62,8 +62,25 @@ static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
  * the radio's calibration; at 0x01C121F0 it starts cleanly) */
 static uint32_t heap[HEAP_BYTES / 4u];
 #endif
-const uint32_t shim_heap_size = HEAP_BYTES;
-void *shim_heap_base(void) { return heap; }
+#if SHIM_WIFI
+/* and a second part in .bss, the RAM the task queues gave up (os.c QLEN): one heap across both */
+#ifndef SHIM_HEAP2_KB
+#define SHIM_HEAP2_KB 24u
+#endif
+#define HEAP2_BYTES (SHIM_HEAP2_KB * 1024u)
+static uint32_t heap2[HEAP2_BYTES / 4u] __attribute__((aligned(8)));
+#else
+#define HEAP2_BYTES 0u
+#endif
+const uint32_t shim_heap_size = HEAP_BYTES + HEAP2_BYTES;
+void *shim_heap_base(void)                        /* the heap's lowest address (the tasks' stacks are in it: os.c) */
+{
+#if SHIM_WIFI
+    return (uint8_t *)heap2 < (uint8_t *)heap ? (void *)heap2 : (void *)heap;
+#else
+    return heap;
+#endif
+}
 typedef struct blk { uint32_t size; struct blk *next; } blk_t;   /* size in bytes, header included */
 static blk_t *free_list;
 static int heap_ready;
@@ -74,6 +91,19 @@ static void heap_init(void)
     free_list = (blk_t *)heap;
     free_list->size = HEAP_BYTES;
     free_list->next = 0;
+#if SHIM_WIFI
+    {   /* the second part, in address order (free merges neighbours by address) */
+        blk_t *b = (blk_t *)heap2;
+        b->size = HEAP2_BYTES;
+        if ((uint8_t *)b < (uint8_t *)free_list) {
+            b->next = free_list;
+            free_list = b;
+        } else {
+            b->next = 0;
+            free_list->next = b;
+        }
+    }
+#endif
     heap_ready = 1;
 }
 

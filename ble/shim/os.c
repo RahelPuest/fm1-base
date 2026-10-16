@@ -28,7 +28,12 @@ void *malloc(size_t n);
 #else
 #define NTASK 4                       /* main + btctrler, btstack, btencry */
 #endif
+#if SHIM_WIFI
+#define QLEN 64                       /* ints per task queue: WiFi's tasks wait on semaphores, only sys_timer posts
+                                       * (4 deep at most, measured on fm1-radio): the room goes to the heap (misc.c) */
+#else
 #define QLEN 512                      /* ints per task queue (BT posts bursts) */
+#endif
 #define STACK_WORDS 2048              /* 8 KiB per task, in the pool: an interrupt (the audio render) nests on top */
 
 enum { W_NONE, W_TASKQ, W_SEM, W_MUTEX, W_TIME };
