@@ -478,6 +478,16 @@ void app_frame(void)
         lit_until = 0;
         ui.redraw = 1;
     }
+    if (FM1B_BLE_CENTRAL) {                  /* scanning: a device found is named at once (REC connects to it) */
+        static int found;
+        int n = 0;
+        if (plat_ble_device() == BLE_DEV_SCANNING)
+            while (n < 8 && plat_ble_found(n, 0, 0))
+                n++;
+        if (n > found && ui.pick < n)
+            ble_device_say();
+        found = n;
+    }
     if (midi_count != last_midi) {
         last_midi = midi_count;
         ui.redraw = 1;
