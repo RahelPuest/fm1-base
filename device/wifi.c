@@ -73,69 +73,69 @@ int init_net_device_mac_addr(char *macaddr, char ap_mode)
 }
 
 /* ---- the networks joined (OBJ_WIFI), the most recent first */
-#define NET_N 6
-typedef struct { char ssid[33], pass[64]; } net_t;
+#define WF_NET_N 6
+typedef struct { char ssid[33], pass[64]; } wf_net_t;
 static struct {
     uint32_t magic;
-    net_t n[NET_N];
-} nets;
-#define NETS_MAGIC 0x57494632u                    /* "WIF2" */
-static uint8_t nets_loaded;
+    wf_net_t n[WF_NET_N];
+} wf_nets;
+#define WF_NETS_MAGIC 0x57494632u                    /* "WIF2" */
+static uint8_t wf_nets_loaded;
 
-static int w_eq(const char *a, const char *b)
+static int wf_eq(const char *a, const char *b)
 {
     while (*a && *a == *b)
         a++, b++;
     return *a == *b;
 }
-static void w_cpy(char *d, const char *s, unsigned max)
+static void wf_cpy(char *d, const char *s, unsigned max)
 {
     unsigned i;
     for (i = 0; i + 1u < max && s && s[i]; i++)
         d[i] = s[i];
     d[i] = 0;
 }
-static void nets_load(void)
+static void wf_nets_load(void)
 {
-    if (nets_loaded)
+    if (wf_nets_loaded)
         return;
-    nets_loaded = 1;
-    memset(&nets, 0, sizeof nets);
-    if (plat_store_load(OBJ_WIFI, &nets, sizeof nets) != (int)sizeof nets || nets.magic != NETS_MAGIC) {
-        memset(&nets, 0, sizeof nets);
-        nets.magic = NETS_MAGIC;
+    wf_nets_loaded = 1;
+    memset(&wf_nets, 0, sizeof wf_nets);
+    if (plat_store_load(OBJ_WIFI, &wf_nets, sizeof wf_nets) != (int)sizeof wf_nets || wf_nets.magic != WF_NETS_MAGIC) {
+        memset(&wf_nets, 0, sizeof wf_nets);
+        wf_nets.magic = WF_NETS_MAGIC;
     }
 }
-static void nets_save(void) { plat_store_save(OBJ_WIFI, &nets, sizeof nets); }
-static int nets_count(void)
+static void wf_nets_save(void) { plat_store_save(OBJ_WIFI, &wf_nets, sizeof wf_nets); }
+static int wf_nets_count(void)
 {
     int i;
-    for (i = 0; i < NET_N && nets.n[i].ssid[0]; i++)
+    for (i = 0; i < WF_NET_N && wf_nets.n[i].ssid[0]; i++)
         ;
     return i;
 }
-static int nets_find(const char *ssid)
+static int wf_nets_find(const char *ssid)
 {
     int i;
-    for (i = 0; i < NET_N && nets.n[i].ssid[0]; i++)
-        if (w_eq(nets.n[i].ssid, ssid))
+    for (i = 0; i < WF_NET_N && wf_nets.n[i].ssid[0]; i++)
+        if (wf_eq(wf_nets.n[i].ssid, ssid))
             return i;
     return -1;
 }
 /* to the front (joined): the others move down, the oldest falls off */
-static void nets_front(const char *ssid, const char *pass)
+static void wf_nets_front(const char *ssid, const char *pass)
 {
-    net_t e;
-    int i = nets_find(ssid);
+    wf_net_t e;
+    int i = wf_nets_find(ssid);
     memset(&e, 0, sizeof e);
-    w_cpy(e.ssid, ssid, sizeof e.ssid);
-    w_cpy(e.pass, pass, sizeof e.pass);
+    wf_cpy(e.ssid, ssid, sizeof e.ssid);
+    wf_cpy(e.pass, pass, sizeof e.pass);
     if (i < 0)
-        i = NET_N - 1;
+        i = WF_NET_N - 1;
     for (; i > 0; i--)
-        nets.n[i] = nets.n[i - 1];
-    nets.n[0] = e;
-    nets_save();
+        wf_nets.n[i] = wf_nets.n[i - 1];
+    wf_nets.n[0] = e;
+    wf_nets_save();
 }
 
 /* ---- the state */
@@ -150,8 +150,8 @@ static volatile uint8_t wifi_join_due, wifi_scan_done;
 
 static void wifi_join(const char *ssid, const char *pass)
 {
-    w_cpy(wifi_ssid, ssid, sizeof wifi_ssid);
-    w_cpy(wifi_pass, pass, sizeof wifi_pass);
+    wf_cpy(wifi_ssid, ssid, sizeof wifi_ssid);
+    wf_cpy(wifi_pass, pass, sizeof wifi_pass);
     wifi_ip = 0;
     wifi_why = "";
     wifi_st = WIFI_JOINING;
@@ -172,11 +172,11 @@ static int wifi_event_cb(void *ctx, int event)
         memset(&m, 0, sizeof m);
         m.mode = STA_MODE;
         wifi_try = 0;
-        if (nets_count()) {
-            memcpy(m.ssid[0], nets.n[0].ssid, sizeof m.ssid[0] - 1u);
-            memcpy(m.pwd[0], nets.n[0].pass, sizeof m.pwd[0] - 1u);
-            w_cpy(wifi_ssid, nets.n[0].ssid, sizeof wifi_ssid);
-            w_cpy(wifi_pass, nets.n[0].pass, sizeof wifi_pass);
+        if (wf_nets_count()) {
+            memcpy(m.ssid[0], wf_nets.n[0].ssid, sizeof m.ssid[0] - 1u);
+            memcpy(m.pwd[0], wf_nets.n[0].pass, sizeof m.pwd[0] - 1u);
+            wf_cpy(wifi_ssid, wf_nets.n[0].ssid, sizeof wifi_ssid);
+            wf_cpy(wifi_pass, wf_nets.n[0].pass, sizeof wifi_pass);
         }
         wifi_set_sta_connect_timeout(20);
         wifi_set_default_mode(&m, 1, 0);
@@ -209,7 +209,7 @@ static int wifi_event_cb(void *ctx, int event)
         }
         break;
     case WIFI_EVENT_STA_CONNECT_TIMEOUT_NOT_FOUND_SSID:
-        if (wifi_try + 1 < nets_count()) {        /* the saved networks: the next one */
+        if (wifi_try + 1 < wf_nets_count()) {        /* the saved networks: the next one */
             wifi_try++;
             wifi_join_due = 1;
         } else {
@@ -237,10 +237,10 @@ static int wifi_event_cb(void *ctx, int event)
 }
 
 /* ---- the scan list */
-#define SCAN_N 12
-typedef struct { char ssid[33]; int8_t rssi; uint8_t secured; } scan_t;
-static scan_t scan_list[SCAN_N];
-static int scan_n;
+#define WF_SCAN_N 12
+typedef struct { char ssid[33]; int8_t rssi; uint8_t secured; } wf_scan_t;
+static wf_scan_t wf_scan_list[WF_SCAN_N];
+static int wf_scan_n;
 static uint32_t wifi_scans;                       /* scans collected (plat_wifi_scans) */
 
 /* after WIFI_EVENT_STA_SCAN_COMPLETED (a scan of ours, or a join's): the results, strongest first, each network
@@ -249,9 +249,9 @@ static void wifi_scan_collect(void)
 {
     u32 n = 0, i;
     struct wifi_scan_ssid_info *r = wifi_get_scan_result(&n);
-    scan_n = 0;
-    for (i = 0; r && i < n && scan_n < SCAN_N; i++) {
-        scan_t *s = &scan_list[scan_n];
+    wf_scan_n = 0;
+    for (i = 0; r && i < n && wf_scan_n < WF_SCAN_N; i++) {
+        wf_scan_t *s = &wf_scan_list[wf_scan_n];
         unsigned k, len = r[i].ssid_len < 32u ? r[i].ssid_len : 32u;
         int j;
         if (!len)
@@ -259,18 +259,18 @@ static void wifi_scan_collect(void)
         for (k = 0; k < len; k++)
             s->ssid[k] = r[i].ssid[k];
         s->ssid[k] = 0;
-        for (j = 0; j < scan_n && !w_eq(scan_list[j].ssid, s->ssid); j++)
+        for (j = 0; j < wf_scan_n && !wf_eq(wf_scan_list[j].ssid, s->ssid); j++)
             ;
-        if (j < scan_n)
+        if (j < wf_scan_n)
             continue;
         s->rssi = (int8_t)r[i].rssi;
         s->secured = r[i].enc != 0;
-        for (j = scan_n; j > 0 && scan_list[j - 1].rssi < s->rssi; j--) {
-            scan_t t = scan_list[j];
-            scan_list[j] = scan_list[j - 1];
-            scan_list[j - 1] = t;
+        for (j = wf_scan_n; j > 0 && wf_scan_list[j - 1].rssi < s->rssi; j--) {
+            wf_scan_t t = wf_scan_list[j];
+            wf_scan_list[j] = wf_scan_list[j - 1];
+            wf_scan_list[j - 1] = t;
         }
-        scan_n++;
+        wf_scan_n++;
     }
     if (r)
         wifi_clear_scan_result();
@@ -286,12 +286,12 @@ static void wifi_poll(void)
     shim_run();
     radio_stuck_check();
     radio_settle(wifi_st >= WIFI_ON);
-    if (wifi_join_due == 1 && wifi_try < nets_count()) {
+    if (wifi_join_due == 1 && wifi_try < wf_nets_count()) {
         wifi_join_due = 0;
-        wifi_join(nets.n[wifi_try].ssid, nets.n[wifi_try].pass);
+        wifi_join(wf_nets.n[wifi_try].ssid, wf_nets.n[wifi_try].pass);
     } else if (wifi_join_due == 2) {
         wifi_join_due = 0;
-        nets_front(wifi_ssid, wifi_pass);         /* joined: kept, the most recent first */
+        wf_nets_front(wifi_ssid, wifi_pass);         /* joined: kept, the most recent first */
     }
     if (wifi_st == WIFI_CONNECTED && wifi_is_on())
         wifi_rssi = (int8_t)wifi_get_rssi();
@@ -304,7 +304,7 @@ static void wifi_poll(void)
 /* ---- plat.h */
 void plat_wifi_on(int on)
 {
-    nets_load();
+    wf_nets_load();
     if (on && wifi_st == WIFI_OFF) {
         static uint8_t first = 1;
         wifi_ip = 0;
@@ -340,52 +340,52 @@ int plat_wifi_rssi(void) { return wifi_st == WIFI_CONNECTED ? wifi_rssi : 0; }
 int plat_wifi_scan(void) { return wifi_st >= WIFI_ON && wifi_st != WIFI_FAILED ? wifi_scan_req() : -1; }
 int plat_wifi_found(int i, char *ssid, int *rssi, int *secured)
 {
-    if (i < 0 || i >= scan_n)
+    if (i < 0 || i >= wf_scan_n)
         return 0;
     if (ssid)
-        w_cpy(ssid, scan_list[i].ssid, 33);
+        wf_cpy(ssid, wf_scan_list[i].ssid, 33);
     if (rssi)
-        *rssi = scan_list[i].rssi;
+        *rssi = wf_scan_list[i].rssi;
     if (secured)
-        *secured = scan_list[i].secured;
+        *secured = wf_scan_list[i].secured;
     return 1;
 }
 int plat_wifi_join(const char *ssid, const char *pass)
 {
     int i;
-    nets_load();
+    wf_nets_load();
     if (wifi_st == WIFI_OFF || wifi_st == WIFI_STARTING || !ssid || !ssid[0])
         return -1;
-    i = nets_find(ssid);
+    i = wf_nets_find(ssid);
     if (!pass)
-        pass = i >= 0 ? nets.n[i].pass : "";
-    wifi_try = NET_N;                             /* (by hand: no going on to the saved ones) */
+        pass = i >= 0 ? wf_nets.n[i].pass : "";
+    wifi_try = WF_NET_N;                             /* (by hand: no going on to the saved ones) */
     wifi_join(ssid, pass);
     return 0;
 }
 int plat_wifi_saved(int i, char *ssid)
 {
-    nets_load();
-    if (i < 0 || i >= nets_count())
+    wf_nets_load();
+    if (i < 0 || i >= wf_nets_count())
         return 0;
     if (ssid)
-        w_cpy(ssid, nets.n[i].ssid, 33);
+        wf_cpy(ssid, wf_nets.n[i].ssid, 33);
     return 1;
 }
 void plat_wifi_forget(int i)
 {
-    nets_load();
-    if (i < 0 || i >= nets_count())
+    wf_nets_load();
+    if (i < 0 || i >= wf_nets_count())
         return;
-    for (; i < NET_N - 1; i++)
-        nets.n[i] = nets.n[i + 1];
-    memset(&nets.n[NET_N - 1], 0, sizeof nets.n[0]);
-    nets_save();
+    for (; i < WF_NET_N - 1; i++)
+        wf_nets.n[i] = wf_nets.n[i + 1];
+    memset(&wf_nets.n[WF_NET_N - 1], 0, sizeof wf_nets.n[0]);
+    wf_nets_save();
 }
 int plat_wifi_kept(const char *ssid)
 {
-    nets_load();
-    return ssid && nets_find(ssid) >= 0;
+    wf_nets_load();
+    return ssid && wf_nets_find(ssid) >= 0;
 }
 uint32_t plat_wifi_scans(void) { return wifi_scans; }
 int plat_net_task(void (*fn)(void *), void *arg, const char *name) { return task_create(fn, arg, name); }
