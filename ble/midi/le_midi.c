@@ -733,10 +733,10 @@ void ble_profile_init(void)
     sm_set_encryption_key_size_range(7, 16);
     sm_set_request_security(0);                  /* MIDI needs no pairing; a central may still ask */
 #if BLE_MIDI_CENTRAL
-    /* as a central: pair (Just Works) as a MIDI device expects, and again when the bond it remembers is one we lost
-     * (key missing), else the stack ends the link (0x16) when the device's security request goes unanswered */
+    /* as a central: no pairing asked for (BLE MIDI needs none; an OXI E16 refuses it, and the service search did
+     * not survive the attempt); Just Works if a device asks, and again when it remembers a bond we lost */
     sm_set_master_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
-    sm_set_master_request_pair(1);
+    sm_set_master_request_pair(0);
     sm_set_master_pair_redo(1);
 #endif
     sm_event_callback_set(&cbk_sm_packet_handler);
