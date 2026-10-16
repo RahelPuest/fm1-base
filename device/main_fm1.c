@@ -396,6 +396,10 @@ static void fm1_main(void)
     uint32_t last_frame = 0;
     {
         uint32_t f = irq_save();
+        fm1_vdc14_raise(7);                         /* M-VAVE's own supplies before anything loads them: 1.60 V, */
+        fm1_sysvdd_raise(15);                       /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
+                                                     * come back corrupted under load: the radio's trim crashed
+                                                     * CTL-1 0.6 s into most Bluetooth starts */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
         irq_restore(f);
         if (flash_ok)
