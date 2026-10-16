@@ -28,6 +28,7 @@ parts it has.
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the master output |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app, at MASTER |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
+| WiFi: a station on the networks around, with lwIP's sockets | `wifi = true` (not with `ble`, yet), and `net = [...]` for the app's network code | `plat_wifi_on`, `plat_wifi_state`, `plat_wifi_scan`, `plat_wifi_found`, `plat_wifi_join`, `plat_wifi_saved`, `plat_wifi_forget`, `plat_net_task` |
 | A page for Bluetooth MIDI devices: the scan while it's up, the list, SAVE to connect or let go, and what happened in words | `#define APP_BTDEV` in app.h, with `ble_central` | `btdev_page`, `btdev_event`, `btdev_word`, `btdev_found`, `btdev_choose`, `btdev_save`, `btdev_title` (lib/btdev.h) |
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
@@ -39,8 +40,16 @@ when it changes, and tells the platform whether to start it at power-on with `AP
 expression, e.g. `(set.bluetooth != 0)`). Off ends every link and stops advertising and scanning: the radio is quiet.
 Its manual should say where the setting is (the template's: for details, see template/docs/MANUAL.md).
 
+WiFi is off until the app turns it on (`plat_wifi_on(1)`); then it joins the networks it joined before, kept in the
+app's store object `OBJ_WIFI`. The app's network code (the files in `net`) is built as the SDK builds code that
+talks lwIP, includes `lwip/sockets.h`, and runs in a task of its own (`plat_net_task`): a socket call waits, and the
+main loop must not. A WiFi build has fm1-radio's memory map (`device/app_wifi.ld`): the WiFi library's buffers take
+most of the RAM and the pool, so its canvas is smaller (`APP_CANVAS_PX` in app.h) and USB audio is best left out.
+Passwords come over USB: `tools/fm1_remote.py wifi join SSID PASSWORD`. For a working example, see `examples/wifi`.
+
 ## Development over USB
 
 `tools/fm1_remote.py` drives an FM-1 running any fm1-base firmware as a player would: buttons, keys, encoders,
-MASTER, and reads back what the screen says (the screen reader's channel), the last crash and Bluetooth's log.
+MASTER, and reads back what the screen says (the screen reader's channel), the last crash and the radio's log; with
+WiFi, it turns it on and off, joins networks and reads its state (`wifi ...`).
 For example, `tools/fm1_remote.py listen tap REC wait 3000 screen log`.
