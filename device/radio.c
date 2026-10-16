@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal (from fm1-ble and fm1-ctl) */
-/* Bluetooth MIDI (FM1B_BLE): JieLi's BT stack (btctrler.a, btstack.a, wl_rf_common.a: Apache-2.0, binary
- * only) on the shim in ble/shim. Started at every boot, as the stock firmware does, unless the last
- * Bluetooth run ended in a crash or a watchdog reset (then by hand: plat_ble_start). Part of the unity
- * build (unity.c). A short log and a crash note survive a reset (plat_ble_log_line). */
+/* The radio (FM1B_BLE, FM1B_WIFI): the platform JieLi's libraries run on (the shim in ble/shim asks for interrupts,
+ * a clock, delays, a log, a store), a radio's start (its log, the render held while it calibrates), and Bluetooth
+ * MIDI (FM1B_BLE): JieLi's BT stack (btctrler.a, btstack.a, wl_rf_common.a: Apache-2.0, binary only), started at
+ * every boot, as the stock firmware does, unless the last radio run ended in a crash or a watchdog reset (then by
+ * hand: plat_ble_start). WiFi's own part: wifi.c. Part of the unity build (unity.c). A short log and a crash note
+ * survive a reset (plat_ble_log_line). */
 #include "shim.h"
 
 /* ---- the platform the shim asks for */
@@ -38,7 +40,7 @@ int shim_in_irq(void) { return 0; }
 volatile uint32_t shim_isr_blocks;               /* waits refused in an interrupt (os.c; with SHIM_WIFI only) */
 /* every task waits: run what is due (a timer may be what they wait for) and keep the watchdog fed,
  * whichever context we are in (btstack_init waits in the main loop's) */
-static void ble_stuck_check(void);
+static void radio_stuck_check(void);
 void shim_idle(void)
 {
     static uint8_t in;
@@ -46,7 +48,7 @@ void shim_idle(void)
     if (!in) {
         in = 1;
         shim_timers();
-        ble_stuck_check();
+        radio_stuck_check();
         in = 0;
     }
 }
@@ -143,8 +145,8 @@ static char *put_dec(char *b, uint32_t v)
 
 /* at boot: what ended the last run. The crash note: the fault's pc, vector and debug register, its
  * return address and how long Bluetooth had run, and the core's last four branches (ETM). */
-static uint8_t ble_last_bad;                      /* the last BT run ended in a crash or a watchdog reset */
-static void ble_boot_note(void)
+static uint8_t radio_last_bad;                      /* the last BT run ended in a crash or a watchdog reset */
+static void radio_boot_note(void)
 {
     char b[40];
     int crashed = fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != blog.crash_seen;
@@ -193,17 +195,117 @@ static void ble_boot_note(void)
         *q = 0;
         shim_log(b);
     }
-    ble_last_bad = (uint8_t)(blog.running && (crashed || (fm1_boot.p3_rst & 4u)));
+    radio_last_bad = (uint8_t)(blog.running && (crashed || (fm1_boot.p3_rst & 4u)));
     blog.running = 0;
 }
 
 /* an intentional restart (an update, the chip's update mode): the next boot does not take it for a crash */
-static void ble_clean_exit(void) { blog.running = 0; }
+static void radio_clean_exit(void) { blog.running = 0; }
 
 /* the radio's address and pairing: the app's store object OBJ_BLE (app.h) */
 int shim_store_load(void *dst, uint32_t max) { return plat_store_load(OBJ_BLE, dst, max); }
 int shim_store_save(const void *src, uint32_t len) { return plat_store_save(OBJ_BLE, src, len); }
 
+extern int syscfg_read(uint16_t id, void *buf, uint16_t len);
+extern int syscfg_write(uint16_t id, void *buf, uint16_t len);
+/* the BT address: the one kept, or one made from the chip's unique data (the SDK's own fallback is
+ * a random one, kept) */
+#define CFG_BT_MAC_ADDR 1                         /* include_lib/utils/syscfg/syscfg_id.h */
+const uint8_t *bt_get_mac_addr(void)
+{
+    static uint8_t mac[6];
+    static const uint8_t none[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    uint32_t i, h = 2166136261u;
+    if (syscfg_read(CFG_BT_MAC_ADDR, mac, 6) == 6 && memcmp(mac, none, 6))
+        return mac;
+    h ^= fm1_ticks();
+    for (i = 0; i < 6u; i++) {
+        h = (h ^ (h >> 13)) * 16777619u + fm1_ticks();
+        mac[i] = (uint8_t)(h >> 8);
+    }
+    mac[0] = (uint8_t)((mac[0] & 0xFC) | 0xC0);   /* a static random address */
+    syscfg_write(CFG_BT_MAC_ADDR, mac, 6);
+    return mac;
+}
+
+
+/* ---- a radio's start (Bluetooth's, WiFi's): its log, the render held while it calibrates */
+static uint32_t radio_t0;
+static uint8_t radio_starting;                    /* started, not ready yet (radio_settle) */
+/* BLE_MASK_AT_START: mask the input timer while the radio calibrates. fm1-ble needed it while the RF
+ * trim ran from the flash (the real cause of its crashes, notes/06); with the trim in RAM it should
+ * not be, and without it keys, USB and the screen do not pause when Bluetooth starts. */
+#ifndef BLE_MASK_AT_START
+#define BLE_MASK_AT_START 0
+#endif
+static uint8_t irqs_masked;
+/* radio_quiet: the render holds (app_quiet, or silence) for the first second of the start. The radio's trim
+ * draws ~500 ms of high current, and what is read from the flash meanwhile can come back corrupted (notes/06
+ * of fm1-ble): the trim itself runs from RAM, but CTL-1's GM synth read its code and 200 KB of samples from
+ * the flash in the audio interrupt, ~30% of the time, and crashed there 0.2 s into the start. */
+static volatile uint8_t radio_quiet;
+static void radio_begin(const char *what)
+{
+    static uint8_t os_up;
+    if (fm1_crash.magic != FM1_CRASH_MAGIC)
+        fm1_crash.count = 0;
+    if (blog.magic != BLE_LOG_MAGIC || blog.w > 100000u)
+        blog.w = 0;                               /* (else the log goes on: the last run's crash note stays readable) */
+    blog.magic = BLE_LOG_MAGIC;
+    blog.crash_seen = fm1_crash.count;
+    blog.running = 1;
+    radio_t0 = blog.t0_up = fm1_uptime_ms();
+    radio_starting = 1;
+    shim_log(what);
+    radio_quiet = 1;
+#if BLE_MASK_AT_START
+    {
+        uint32_t f = irq_save();
+        fm1_irq_mask(FM1_IRQ_TIMER5);
+        irq_restore(f);
+        irqs_masked = 1;
+    }
+#endif
+    if (!os_up) {                                 /* the shim, once (both radios share it) */
+        os_up = 1;
+        shim_os_init();
+        fm1_guard_stack_floor(shim_stacks_lo());  /* the tasks' stacks are in the pool */
+    }
+}
+/* the main loop: the render back a second into the start once the radio is ready (or after 15 s), and the input
+ * timer if it was masked */
+static void radio_settle(int ready)
+{
+    uint32_t f;
+    if (ready)
+        radio_starting = 0;
+    else if (fm1_uptime_ms() - radio_t0 <= 15000u)
+        return;
+    if (radio_quiet && fm1_uptime_ms() - radio_t0 > 1000u) {
+        radio_quiet = 0;
+        shim_log(ready ? "sound back: ready" : "sound back: 15 s, not ready");
+    }
+    if (!irqs_masked)
+        return;
+    irqs_masked = 0;
+    f = irq_save();
+    fm1_irq_unmask(FM1_IRQ_TIMER5);
+    irq_restore(f);
+    shim_log(ready ? "irqs back: ready" : "irqs back: 15 s, not ready");
+}
+extern void shim_os_dump(void);
+static void radio_stuck_check(void)               /* still starting after 3 s: say what each task waits for */
+{
+    static uint32_t said;
+    if (radio_starting && fm1_uptime_ms() - radio_t0 > 3000u && said != radio_t0) {
+        said = radio_t0;
+        shim_log("still starting after 3 s:");
+        shim_os_dump();
+    }
+}
+
+#if FM1B_BLE
+/* ---- Bluetooth MIDI */
 static volatile uint8_t ble_state;
 
 /* ---- MIDI both ways (ble/midi/le_midi.c); everything here runs in the main loop */
@@ -313,8 +415,6 @@ extern void bt_max_pwr_set(uint8_t pwr, uint8_t pg_pwr, uint8_t iq_pwr, uint8_t 
 #define BLE_TX_POWER 11                           /* the top: -64 dBm at 6 where the stock firmware gives -39 */
 extern void lib_make_ble_address(uint8_t *ble, uint8_t *edr);
 extern int le_controller_set_mac(void *addr);
-extern int syscfg_read(uint16_t id, void *buf, uint16_t len);
-extern int syscfg_write(uint16_t id, void *buf, uint16_t len);
 
 struct bt_event_s { uint8_t event; uint8_t args[7]; uint32_t value; };
 void shim_bt_event(int from, const void *event, int len)
@@ -336,91 +436,13 @@ void shim_bt_event(int from, const void *event, int len)
     }
 }
 
-/* the BT address: the one kept, or one made from the chip's unique data (the SDK's own fallback is
- * a random one, kept) */
-#define CFG_BT_MAC_ADDR 1                         /* include_lib/utils/syscfg/syscfg_id.h */
-const uint8_t *bt_get_mac_addr(void)
-{
-    static uint8_t mac[6];
-    static const uint8_t none[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    uint32_t i, h = 2166136261u;
-    if (syscfg_read(CFG_BT_MAC_ADDR, mac, 6) == 6 && memcmp(mac, none, 6))
-        return mac;
-    h ^= fm1_ticks();
-    for (i = 0; i < 6u; i++) {
-        h = (h ^ (h >> 13)) * 16777619u + fm1_ticks();
-        mac[i] = (uint8_t)(h >> 8);
-    }
-    mac[0] = (uint8_t)((mac[0] & 0xFC) | 0xC0);   /* a static random address */
-    syscfg_write(CFG_BT_MAC_ADDR, mac, 6);
-    return mac;
-}
-
-static uint32_t ble_t0;
-/* BLE_MASK_AT_START: mask the input timer while the radio calibrates. fm1-ble needed it while the RF
- * trim ran from the flash (the real cause of its crashes, notes/06); with the trim in RAM it should
- * not be, and without it keys, USB and the screen do not pause when Bluetooth starts. */
-#ifndef BLE_MASK_AT_START
-#define BLE_MASK_AT_START 0
-#endif
-static uint8_t irqs_masked;
-/* ble_quiet: the render holds (app_quiet, or silence) for the first second of the start. The radio's trim
- * draws ~500 ms of high current, and what is read from the flash meanwhile can come back corrupted (notes/06
- * of fm1-ble): the trim itself runs from RAM, but CTL-1's GM synth read its code and 200 KB of samples from
- * the flash in the audio interrupt, ~30% of the time, and crashed there 0.2 s into the start. */
-static volatile uint8_t ble_quiet;
-static void ble_irqs_back(const char *why)
-{
-    uint32_t f;
-    if (ble_quiet && fm1_uptime_ms() - ble_t0 > 1000u) {
-        ble_quiet = 0;
-        shim_log(ble_state == BLE_READY ? "sound back: BT ready" : "sound back: 15 s, not ready");
-    }
-    if (!irqs_masked)
-        return;
-    irqs_masked = 0;
-    f = irq_save();
-    fm1_irq_unmask(FM1_IRQ_TIMER5);
-    irq_restore(f);
-    shim_log(why);
-}
-extern void shim_os_dump(void);
-static void ble_stuck_check(void)                 /* still starting after 3 s: say what each task waits for */
-{
-    static uint32_t said;
-    if (ble_state == BLE_STARTING && fm1_uptime_ms() - ble_t0 > 3000u && said != ble_t0) {
-        said = ble_t0;
-        shim_log("still starting after 3 s:");
-        shim_os_dump();
-    }
-}
-
 static void ble_start(void)
 {
     uint8_t addr[6];
     if (ble_state != BLE_OFF)
         return;
     ble_state = BLE_STARTING;
-    if (fm1_crash.magic != FM1_CRASH_MAGIC)
-        fm1_crash.count = 0;
-    if (blog.magic != BLE_LOG_MAGIC || blog.w > 100000u)
-        blog.w = 0;                               /* (else the log goes on: the last run's crash note stays readable) */
-    blog.magic = BLE_LOG_MAGIC;
-    blog.crash_seen = fm1_crash.count;
-    blog.running = 1;
-    ble_t0 = blog.t0_up = fm1_uptime_ms();
-    shim_log("BT: starting");
-    ble_quiet = 1;
-#if BLE_MASK_AT_START
-    {
-        uint32_t f = irq_save();
-        fm1_irq_mask(FM1_IRQ_TIMER5);
-        irq_restore(f);
-        irqs_masked = 1;
-    }
-#endif
-    shim_os_init();
-    fm1_guard_stack_floor(shim_stacks_lo());      /* the tasks' stacks are in the pool */
+    radio_begin("BT: starting");
     lmp_set_sniff_disable();
     /* the radio's transmit power, 0..11: the SDK sets it in its config start-up (apps/common/config/
      * user_cfg.c, cfg_file_parse: classic 8, BLE 6), which the shim does not run; left alone the
@@ -450,15 +472,12 @@ static void ble_poll(void)
         ble_midi_poll();                          /* a connection that never answers, given up */
     }
 #endif
-    ble_stuck_check();
-    if (ble_state == BLE_READY)
-        ble_irqs_back("irqs back: BT ready");
-    else if (fm1_uptime_ms() - ble_t0 > 15000u)
-        ble_irqs_back("irqs back: 15 s, not ready");
+    radio_stuck_check();
+    radio_settle(ble_state == BLE_READY);
     {   /* ten seconds after it is ready, once: the tasks' deepest stack so far (sizing; 8 KiB each) */
         static uint8_t said;
         extern int shim_stack_depth(int task);
-        if (ble_state == BLE_READY && !said && fm1_uptime_ms() - ble_t0 > 10000u) {
+        if (ble_state == BLE_READY && !said && fm1_uptime_ms() - radio_t0 > 10000u) {
             char b[40] = "stacks ", *q = b + 7;
             int k;
             said = 1;
@@ -515,6 +534,11 @@ void plat_ble_disconnect(void) {}
 int plat_ble_device(void) { return BLE_DEV_OFF; }
 #endif
 void plat_ble_start(void) { ble_start(); }
+#else
+#include "ble_none.c"
+#endif
+
+/* ---- plat.h: the radio's log */
 const char *plat_ble_log_line(int back)
 {
     if (blog.magic != BLE_LOG_MAGIC || back < 0 || (uint32_t)back >= blog.w || back >= BLE_LOG_N)

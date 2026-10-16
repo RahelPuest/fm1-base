@@ -30,7 +30,7 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     uint32_t t0 = fm1_ticks(), us, budget = HALF_FRAMES * 1000000u / FS;
     fm1b_dbg.in_audio = 1;
 #if FELUCCA_UAC
-    if (!ble_quiet)                                 /* (USB audio's code is in the flash too: none while the radio
+    if (!radio_quiet)                                 /* (USB audio's code is in the flash too: none while the radio
                                                      * calibrates, when a fetch can come back corrupted; a CTL-1 crashed
                                                      * so, returning to a garbled address, 0.6 s into each start) */
         uac_render_start();
@@ -38,7 +38,7 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     {
         uint32_t k;
         for (k = 0; k < HALF_FRAMES; k += REND_FRAMES) {
-            if (ble_quiet) {                        /* the radio calibrating: no flash reads (ble.c) */
+            if (radio_quiet) {                        /* the radio calibrating: no flash reads (radio.c) */
 #ifdef APP_QUIET
                 app_quiet(o + 2u * k, REND_FRAMES);
 #else
@@ -49,7 +49,7 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             } else {
                 app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
             }
-            if (ble_quiet)
+            if (radio_quiet)
                 continue;
 #if FELUCCA_UAC_OUT
             uac_play(o + 2u * k, REND_FRAMES, master_pos * master_pos >> 12);   /* the computer's audio, at MASTER */
@@ -363,7 +363,7 @@ static void enter_uboot(const char *why)
     usb_detach();
     fm1_delay_ms(30);
     bootguard.pending = 0;                          /* intentional reset: not a failed boot */
-    ble_clean_exit();
+    radio_clean_exit();
     fm1_enter_uboot();
 }
 
@@ -505,8 +505,8 @@ static void fm1_main(void)
     if ((fm1_in.buttons & 3u) == 3u)
         panel_setup();                              /* OCT- + OCT+ held at power-on */
     fm1_delay_ms(400);
-    ble_boot_note();                                /* what ended the last Bluetooth run, into its log */
-    if (!ble_last_bad && APP_BLE_AT_BOOT)
+    radio_boot_note();                                /* what ended the last Bluetooth run, into its log */
+    if (!radio_last_bad && APP_BLE_AT_BOOT)
         ble_start();                                /* Bluetooth is on, as on the stock firmware (unless the app's
                                                      * setting says off: APP_BLE_AT_BOOT) */
 #ifdef APP_BOOT
