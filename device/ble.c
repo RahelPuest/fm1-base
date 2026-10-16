@@ -42,9 +42,23 @@ __attribute__((section(".ram_text"), noinline, used)) void shim_delay_us(uint32_
 
 
 /* the radio's interrupts sit above the input timer (4): JieLi asks for 0..2, mapped to 5..7 */
+static void hex8(char *b, uint32_t v);
 void shim_request_irq(int index, int prio, void (*handler)(void))
 {
-    uint32_t f = irq_save();
+    uint32_t f;
+    {   /* on the log: which source, at what priority, which handler (it goes in the vector table as it is) */
+        char b[32] = "irq ";
+        b[4] = (char)('0' + index / 100 % 10);
+        b[5] = (char)('0' + index / 10 % 10);
+        b[6] = (char)('0' + index % 10);
+        b[7] = ' ';
+        b[8] = (char)('0' + (prio & 7));
+        b[9] = ' ';
+        hex8(b + 10, (uint32_t)(uintptr_t)handler);
+        b[18] = 0;
+        shim_log(b);
+    }
+    f = irq_save();
     fm1_guard_unlock_top();
     fm1_irq_attach((uint32_t)index, handler, (uint32_t)(prio + 5 > 7 ? 7 : prio + 5));
     fm1_guard_lock_top();
