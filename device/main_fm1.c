@@ -21,6 +21,11 @@ struct fm1b_dbg {
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
+#define WDT_CARRY 0x57445452u                       /* "WDTR": a watchdog reset, carried across the chip reset after it */
+static uint32_t wdt_carry __attribute__((section(".noinit")));
+static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
+                                                                  * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
+                                                                  * 6 input (fm1b_dbg.stage) */
 
 static void render_block(int32_t *o)                /* ALNK0: one half, measured */
 {
@@ -212,6 +217,18 @@ static int log_frame(const uint8_t *p, uint32_t n)
         log_line_send(b);
     } else {
         log_line_send("no crash recorded");
+    }
+    if (wdt_stage) {
+        static const char *const ST[7] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input"};
+        char *q = b;
+        const char *t = "last watchdog reset in ";
+        while (*t)
+            *q++ = *t++;
+        t = ST[wdt_stage < 7u ? wdt_stage : 0];
+        while (*t)
+            *q++ = *t++;
+        *q = 0;
+        log_line_send(b);
     }
     for (k = (int)plat_ble_log_total() - 1; k >= 0; k--) {
         if (!plat_ble_log_line(k)[0])
@@ -452,7 +469,9 @@ static void fm1_main(void)
                 master_pos = remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4);
             }
         }
+        fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */
+        fm1b_dbg.stage = 3;
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif
@@ -481,6 +500,7 @@ static void fm1_main(void)
             if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)))
                 ota_frame_done();
         }
+        fm1b_dbg.stage = 4;
         ota_service();                              /* M-UPGRADE handshake (other SysEx is dropped) */
         if (usb.ota_req) {
             usb.ota_req = 0;
@@ -497,8 +517,10 @@ static void fm1_main(void)
         if (fm1_ms - last_frame >= 16u) {           /* ~60 frames/s at most; input in between */
             last_frame = fm1_ms;
             fm1b_dbg.ui_frames++;
+            fm1b_dbg.stage = 5;
             app_frame();
         } else {
+            fm1b_dbg.stage = 6;
             app_input_only();
         }
     }
@@ -510,6 +532,18 @@ void fm1_cstart(void)
     fm1_time_init();
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;
+    /* after a watchdog reset the radio's hardware may still be writing into the buffers the last run gave it: a
+     * CTL-1 crashed so, a return address on a stack overwritten 0.6 s into the next Bluetooth start, twice. A full
+     * chip reset (P33, as fm1_reboot) first, the watchdog remembered across it */
+    if ((p3 & 4u) && wdt_carry != WDT_CARRY) {
+        wdt_carry = WDT_CARRY;
+        wdt_stage = fm1b_dbg.stage;
+        fm1_reboot();
+    }
+    if (wdt_carry == WDT_CARRY) {
+        wdt_carry = 0;
+        p3 |= 4u;                                   /* (what ended the last run, for the boot guard and the log) */
+    }
     src = fm1_boot.rst_src;
     wdt = fm1_boot.wdt_con;
     fm1_wdt_arm(0x0D);

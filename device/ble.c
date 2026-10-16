@@ -153,7 +153,17 @@ static void ble_boot_note(void)
         b[37] = 0;
         shim_log(b);
     } else if (blog.running && (fm1_boot.p3_rst & 4u)) {
-        shim_log("reset by the watchdog");
+        extern uint32_t shim_task_now;
+        static const char *const T[4] = {"main", "1", "2", "3"};
+        char *q = b;
+        const char *t = "reset by the watchdog: task ";
+        while (*t)
+            *q++ = *t++;
+        t = T[shim_task_now & 3u];
+        while (*t)
+            *q++ = *t++;
+        *q = 0;
+        shim_log(b);
     }
     ble_last_bad = (uint8_t)(blog.running && (crashed || (fm1_boot.p3_rst & 4u)));
     blog.running = 0;

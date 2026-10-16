@@ -34,6 +34,7 @@ static task_t tasks[NTASK];
 static uint32_t stacks[NTASK - 1][STACK_WORDS] __attribute__((aligned(8), section(".pool")));
 uint32_t shim_stacks_lo(void) { return (uint32_t)(uintptr_t)&stacks[0][0]; }
 task_t *shim_cur = &tasks[0];
+uint32_t shim_task_now __attribute__((section(".noinit")));   /* the task running (a watchdog reset's breadcrumb) */
 static uint32_t ticks_ms(void) { return shim_ms(); }
 
 void shim_os_init(void)
@@ -114,6 +115,7 @@ static void switch_to(task_t *n)
     if (n == o)
         return;
     shim_cur = n;
+    shim_task_now = (uint32_t)(n - tasks);
     shim_ctx_switch(&o->sp, n->sp);
 }
 
