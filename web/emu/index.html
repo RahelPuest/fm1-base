@@ -37,7 +37,7 @@ a { color: var(--accent); }
 .hit.knob { cursor: ns-resize; border-radius: 50%; }
 .hit:focus-visible { outline: 3px solid #ffb48a; outline-offset: 2px; box-shadow: 0 0 0 6px #1b1d20; }
 .device svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.device canvas { position: absolute; left: 31.8%; top: 9.6875%; width: 20%; height: 31.25%; image-rendering: pixelated; background: #000; border-radius: 2px; }
+.device canvas { position: absolute; left: 31.8%; top: 9.6875%; width: 20%; height: 31.25%; background: #000; border-radius: 2px; }
 .ctl { cursor: pointer; }
 .ctl.knob { cursor: ns-resize; }
 .btnface { transition: fill .06s; }
@@ -447,8 +447,25 @@ addEventListener("blur", letGoKeys);
 controls.addEventListener("focusout", (e) => { if (!controls.contains(e.relatedTarget)) letGoKeys(); });
 
 // ---------------------------------------------------------------- screen and lights
-const ctx = $("screen").getContext("2d");
-const img = ctx.createImageData(240, 240);
+// The LCD's 240 x 240 picture is drawn into a hidden canvas, then into the visible one enlarged by a whole number
+// with no blending (every LCD pixel the same size), just past the size it is shown at in device pixels; the browser
+// blends that down to the screen. A plain stretch to a size that is not a multiple of 240 makes some pixel columns
+// wider than others.
+const screenEl = $("screen"), ctx = screenEl.getContext("2d");
+const lcd = document.createElement("canvas");
+lcd.width = lcd.height = 240;
+const lctx = lcd.getContext("2d"), img = lctx.createImageData(240, 240);
+function blitScreen() {
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(lcd, 0, 0, screenEl.width, screenEl.height);
+}
+function fitScreen() {
+  const px = screenEl.getBoundingClientRect().width * (window.devicePixelRatio || 1);
+  const n = 240 * Math.max(1, Math.ceil(px / 240 - 0.001));
+  if (screenEl.width !== n) { screenEl.width = screenEl.height = n; blitScreen(); }
+}
+new ResizeObserver(fitScreen).observe(screenEl);
+matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener("change", fitScreen);   // another display
 function drawScreen(fb) {
   const d = img.data;
   for (let i = 0; i < 240 * 240; i++) {
@@ -458,7 +475,8 @@ function drawScreen(fb) {
     d[i * 4 + 2] = (p & 31) * 255 / 31;
     d[i * 4 + 3] = 255;
   }
-  ctx.putImageData(img, 0, 0);
+  lctx.putImageData(img, 0, 0);
+  blitScreen();
 }
 // a light's state in the control's name: "lit", or "blinking" when it changed three times in the last 2 s (PLAY
 // while the rhythm runs; a key pressed and let go is not blinking); the white keys light as their strings ring, which the ear says better
