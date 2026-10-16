@@ -17,7 +17,7 @@ This manual is also an example: copy it with the template and write your firmwar
 2. The screen
 3. Controls
 4. Saving
-5. MIDI
+5. MIDI and audio
 6. The screen reader
 7. Troubleshooting
 
@@ -74,7 +74,7 @@ there are changes to save.
 
 ---
 
-## 5. MIDI
+## 5. MIDI and audio
 
 MIDI comes in over USB, Bluetooth and the TRS jack. A note on any channel plays the voice; a note off releases it.
 The keys send notes, with their velocity, and poly aftertouch out over USB and Bluetooth.
@@ -85,6 +85,10 @@ MIDI settings.
 
 The keys sense how hard they're played, with no change to the FM-1. The 20 lowest keys
 (F3 to C5) give velocity and pressure; the top seven give velocity only.
+
+Over the USB cable the FM-1 is also a sound card. A computer can record what it plays (an input named
+"TEMPLATE FM-1"), and can play through it: choose "TEMPLATE FM-1" as the output, and its sound comes out of the
+FM-1's speaker and headphones, mixed with the FM-1's own, at MASTER's volume.
 
 ---
 
