@@ -38,7 +38,7 @@ static void note_off(int32_t note)
 static void midi_in(void)                    /* audio interrupt: the packets that came in */
 {
     uint32_t pkt;
-    while (plat_midi_in(&pkt)) {
+    while (plat_midi_in(&pkt, 0)) {
         uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = pkt >> 24;
         if ((st & 0xF0u) == 0x90u && d2)
             note_on((int32_t)d1);

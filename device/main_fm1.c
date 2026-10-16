@@ -32,13 +32,17 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     {
         uint32_t k;
         for (k = 0; k < HALF_FRAMES; k += REND_FRAMES) {
-            app_render(o + 2u * k, REND_FRAMES, master_q12);
+            app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
 #if FELUCCA_UAC
             uac_tap(o + 2u * k, REND_FRAMES);       /* the USB audio input: the same master output */
 #endif
         }
     }
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+#ifdef APP_OVERLOAD
+    if (us > budget * 9u / 10u)
+        app_overload();                             /* over 90 % of its time: the app sheds what it can */
+#endif
     fm1b_dbg.cpu_q8 = (fm1b_dbg.cpu_q8 * 15u + (us * 256u) / budget) / 16u;
     audio_cpu_pct = (fm1b_dbg.cpu_q8 * 100u) >> 8;
     fm1b_dbg.halves++;
@@ -109,6 +113,13 @@ void fm1_timer5_irq(void)
         uart_midi_poll();                           /* the TRS jack: same context, same queue */
 #endif
     }
+#ifdef APP_TICK
+    if (sub == 0u) {                                /* 1 kHz: the app's tick (a clock, a sequencer) */
+        in_tick = 1;
+        app_tick();
+        in_tick = 0;
+    }
+#endif
     if (++sub == 10u)
         sub = 0;
     {
@@ -225,17 +236,21 @@ static void safe_main(void)
     }
 }
 
-static void splash(void)
+static void splash(void)                           /* the app's (APP_SPLASH), or its name and tagline on paper */
 {
+#ifdef APP_SPLASH
+    app_splash();
+#else
     lcd_fill(0, 0, 240, 240, RGB(250, 244, 232));
     cv_begin(240, 64, RGB(250, 244, 232));
     {
         int32_t w = text_w(&FONT_L, APP_NAME);
         cv_text((240 - w) / 2, 0, &FONT_L, APP_NAME, APP_SPLASH_RGB);
-        w = text_w(&FONT_S, "A chord harp for the FM-1");
-        cv_text((240 - w) / 2, 42, &FONT_S, "A chord harp for the FM-1", RGB(150, 136, 118));
+        w = text_w(&FONT_S, APP_TAGLINE);
+        cv_text((240 - w) / 2, 42, &FONT_S, APP_TAGLINE, RGB(150, 136, 118));
     }
     cv_blit(0, 92);
+#endif
     lcd_sync();
 }
 
@@ -293,6 +308,9 @@ static void fm1_main(void)
     if ((fm1_in.buttons & 3u) == 3u)
         panel_setup();                              /* OCT- + OCT+ held at power-on */
     fm1_delay_ms(400);
+#ifdef APP_BOOT
+    app_boot();                                     /* the app's own start (a radio), the platform up */
+#endif
     app_ui_init();
 
     for (;;) {
@@ -302,15 +320,16 @@ static void fm1_main(void)
             bootguard.pending = 0;
             bootguard.failed = 0;
         }
-        {
-            int32_t a = fm1_adc_read(FM1_ADC_MASTER);
+        {   /* MASTER: smoothed, 0..4092; with the keys' readings on, the scan owns the converter and reads it too */
+            int32_t a = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.master : fm1_adc_read(FM1_ADC_MASTER);
             if (a >= 0) {
-                uint32_t k10;
                 knob += (a * 16 - knob) / 8;
-                k10 = (uint32_t)(knob / 16);
-                master_q12 = (k10 * k10) >> 8;           /* 0 .. ~4096 */
+                master_pos = (uint32_t)(knob / 4);
             }
         }
+#ifdef APP_LOOP
+        app_loop();                                 /* the app's background (a radio's tasks) */
+#endif
         {   /* OCT- + OCT+ held 5 s: update mode (Felucca's, unchanged) */
             static uint32_t t0, shown;
             uint32_t both = (1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]);

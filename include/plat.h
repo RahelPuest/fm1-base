@@ -34,14 +34,37 @@ uint32_t plat_ms(void);
 uint32_t plat_buttons(void);           /* held: bit B_* */
 uint32_t plat_keys(void);              /* held: bit k = key k (0 = F3) */
 int32_t plat_enc(int role);            /* detents since the last call, + = clockwise; EN_* */
-uint32_t plat_master(void);            /* MASTER pot, 0..4096 gain Q12 */
-void plat_leds(uint32_t buttons, uint32_t keys);   /* lit: bit B_*, bit key */
-void plat_glow(int on);                /* the unlit buttons glow dimly, readable in the dark (call before plat_leds) */
-void plat_play_red(int red);           /* PLAY lights green; red (its other LED) while recording (before plat_leds) */
+uint32_t plat_master(void);            /* MASTER pot's position, 0..4096 (the render gets it as a gain: APP_GAIN) */
 
-/* USB MIDI, 4-byte USB-MIDI event packets (cable 0) */
-int plat_midi_in(uint32_t *pkt);       /* 1 = got one (called from the audio ISR) */
-void plat_midi_out(uint32_t pkt);      /* queue one (audio ISR or main loop) */
+/* lights: bright buttons and keys, and dim ones (a short pulse each scan frame; a bright bit wins); glow 0 the dim
+ * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
+void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t dim_keys, int glow);
+#define LED_PLAY_GREEN (1u << NB)
+/* the same, simpler: the lit buttons and keys, the unlit buttons glowing if plat_glow(1); PLAY lights green, red
+ * while plat_play_red(1) */
+void plat_leds(uint32_t buttons, uint32_t keys);
+void plat_glow(int on);
+void plat_play_red(int red);
+
+/* MIDI: 4-byte USB-MIDI event packets (byte 0 = cable / CIN, then status, data 1, data 2). In from USB, the TRS jack
+ * (in only: the FM-1 has no MIDI out jack) and Bluetooth (an app with APP_BLE_MIDI); out to USB and Bluetooth. */
+enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
+#define TO_USB (1u << PORT_USB)
+#define TO_BLE (1u << PORT_BLE)
+int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
+void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE; main loop, the render or the tick */
+void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
+
+/* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
+ * what they share (it nests) */
+uint32_t plat_lock(void);
+void plat_unlock(uint32_t f);
+void plat_yield(void);                 /* long work in the main loop (drawing) lets the app's background run (app_yield) */
+
+/* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
+ * hands each reading to the app (app_key_sample, app_key_probe); off by default */
+void plat_sense(int on);
+uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 / PA8; the top row is probed) */
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad */
@@ -55,3 +78,17 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok */
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);
 uint32_t plat_xruns(void);
+
+/* the app's optional hooks (app.h defines the macro when it has the function):
+ *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
+ *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
+ *   APP_LOOP        void app_loop(void)           every pass of the main loop (a radio's tasks)
+ *   APP_YIELD       void app_yield(void)          from plat_yield, inside long work
+ *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
+ *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
+ *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
+ *   APP_BLE_MIDI    int app_ble_midi_in(uint32_t *pkt), void app_ble_midi_out(uint32_t pkt): Bluetooth MIDI
+ *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
+ *                   int app_key_drive(uint32_t key) (read it driven), void app_key_probe(uint32_t key, uint32_t v,
+ *                   uint32_t pressed) (the top row), int app_key_led_ok(uint32_t key) (0: its column dark when read);
+ *                   from the scan's interrupt */

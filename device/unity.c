@@ -18,6 +18,17 @@
  *                           felucca-bsp's usb.c is checked at this block size on a device
  *   FM1B_TRS 1              MIDI in on the TRS jack */
 #include <stdint.h>
+#include "plat.h"
+#include "app.h"                  /* first: the scan's hooks below may call the app */
+#ifdef APP_KEY_SENSE              /* the keys' readings (plat_sense) to the app, by key: 0..26 */
+#define FM1_KEY_OF(col, rowbit) ((uint32_t)FM1_KEYMAP[rowbit][col] - 14u)
+#define FM1_INPUT_ANALOG(col, rowbit, v, driven) \
+    (FM1_KEYMAP[rowbit][col] >= 14 ? app_key_sample(FM1_KEY_OF(col, rowbit), (v), fm1_ticks(), (int)(driven)) : (void)0)
+#define FM1_INPUT_DRIVE(col, rowbit) (FM1_KEYMAP[rowbit][col] >= 14 && app_key_drive(FM1_KEY_OF(col, rowbit)))
+#define FM1_INPUT_PROBE(col, rowbit, v, pressed) \
+    (FM1_KEYMAP[rowbit][col] >= 14 ? app_key_probe(FM1_KEY_OF(col, rowbit), (v), (pressed)) : (void)0)
+#define FM1_INPUT_LED_OK(col, rowbit) (FM1_KEYMAP[rowbit][col] < 14 || app_key_led_ok(FM1_KEY_OF(col, rowbit)))
+#endif
 #include "fm1_time.h"
 #include "fm1_sys.h"
 #include "fm1_irq.h"
@@ -38,8 +49,6 @@
 static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIMER5 ISR) */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
-#include "plat.h"
-#include "app.h"
 #include "fm1b_config.h"          /* APP_NAME, APP_VERSION, APP_BLOCK ...: the app's, or the defaults */
 #define HALF_FRAMES APP_BLOCK     /* the audio half, as felucca-bsp's usb.c expects it */
 

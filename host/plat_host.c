@@ -86,28 +86,46 @@ int32_t plat_enc(int role)
     return v;
 }
 uint32_t plat_master(void) { return master; }
-void plat_leds(uint32_t b, uint32_t k)
+/* the lights printed ("leds") are the bright ones; PLAY's green counts as PLAY */
+void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
 {
-    lit_btn = b;
+    (void)db, (void)dk, (void)glow;
+    lit_btn = (b & ((1u << NB) - 1u)) | (b & LED_PLAY_GREEN ? 1u << B_PLAY : 0u);
     lit_keys = k;
 }
-static int glow_on = 1;                 /* the device's button glow (plat_glow); the lights printed are the bright ones */
+static int glow_on = 1;                 /* the device's button glow (plat_glow) */
 void plat_glow(int on) { glow_on = on; }
 void plat_play_red(int red) { (void)red; }      /* the device's PLAY colour: green, red while recording */
+void plat_leds(uint32_t b, uint32_t k) { plat_lights(b, k, glow_on ? ~b : 0u, 0, glow_on ? 2 : 0); }
+uint32_t plat_lock(void) { return 0; }  /* one thread: the tick runs between the main loop's steps (run_ms) */
+void plat_unlock(uint32_t f) { (void)f; }
+void plat_yield(void)
+{
+#ifdef APP_YIELD
+    app_yield();
+#endif
+}
+static int sense_on;                    /* the keys' readings: the simulator has none to give (sense_on only) */
+void plat_sense(int on) { sense_on = on; }
+uint32_t plat_analog_mask(void) { return 0xFFFFFu; }    /* the keys on rows PA7 / PA8: keys 0..19 (the top row: 20..26) */
 
 #define MQ 256
 static uint32_t min_q[MQ], mi_w, mi_r;
 static FILE *midi_log;
 static uint32_t midi_out_count, clock_out_count;
-int plat_midi_in(uint32_t *pkt)
+int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi": USB */
 {
     if (mi_r == mi_w)
         return 0;
     *pkt = min_q[mi_r++ % MQ];
+    if (port)
+        *port = PORT_USB;
     return 1;
 }
-void plat_midi_out(uint32_t pkt)
+void plat_midi_send(uint32_t pkt, uint32_t to)
 {
+    if (!(to & TO_USB))                 /* Bluetooth: not simulated */
+        return;
     midi_out_count++;
     if (((pkt >> 8) & 0xFF) == 0xF8) {
         clock_out_count++;
@@ -116,7 +134,7 @@ void plat_midi_out(uint32_t pkt)
     if (midi_log)
         fprintf(midi_log, "%u ms: %02X %02X %02X\n", now_ms, (pkt >> 8) & 0xFF, (pkt >> 16) & 0xFF, (pkt >> 24) & 0xFF);
 }
-/* the engine's MIDI out, as the device's glue sends it (USB-MIDI packet, cable 0) */
+void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
@@ -333,6 +351,9 @@ static void boot(void)
     palette_set(APP_PALETTE);                       /* as the device does at boot */
     app_init();
     lcd_fill(0, 0, 240, 240, 0);
+#ifdef APP_BOOT
+    app_boot();
+#endif
     app_ui_init();
 }
 
@@ -342,9 +363,15 @@ static void run_ms(uint32_t ms)
     uint32_t i, k;
     for (i = 0; i < ms; i++) {
         now_ms++;
+#ifdef APP_TICK
+        app_tick();                                 /* 1 kHz, as the device's timer runs it */
+#endif
+#ifdef APP_LOOP
+        app_loop();
+#endif
         while (audio_due_ms <= (double)now_ms) {      /* APP_BLOCK-frame blocks, as the device renders them */
             double t0 = now_ns(), dt;
-            app_render(blk, APP_BLOCK, master);
+            app_render(blk, APP_BLOCK, APP_GAIN(master));
 #ifdef PLAT_WEB
             web_audio(blk, APP_BLOCK);
 #endif

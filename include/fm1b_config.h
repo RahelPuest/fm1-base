@@ -12,6 +12,12 @@
 #ifndef APP_PALETTE
 #define APP_PALETTE 1u                   /* gfx.c PALETTES: the screen's colours (1 amber) */
 #endif
+#ifndef APP_TAGLINE
+#define APP_TAGLINE ""                   /* under the name on the splash screen */
+#endif
+#ifndef APP_GAIN
+#define APP_GAIN(m) ((m) * (m) >> 12)    /* the render's gain from MASTER's position: the square, 0..~4096 */
+#endif
 #ifndef APP_VERSION
 #define APP_VERSION "DEV"                /* a release build passes its own (tools/build.py --release) */
 #endif
