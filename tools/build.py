@@ -32,8 +32,12 @@ app.h); the build prints what it has.
                              sources), on the same shim (ble/shim, ble/wifi) with fm1-radio's RAM split (device/
                              app_wifi.ld). Not with ble (yet)
   net = ["net/stream.c"]     with wifi: the app's network code (lwIP's sockets), compiled as the SDK builds code that
-                             talks lwIP (its flags and headers), relative to APP_DIR; it calls the platform through
-                             plat.h, runs in a task of its own (plat_net_task)
+                             talks lwIP (its flags and headers), relative to APP_DIR (globs too: "tls/src/**/*.c"); it
+                             calls the platform through plat.h, runs in a task of its own (plat_net_task)
+  net_include = ["tls/inc"]  more include directories for those, relative to APP_DIR
+  net_cflags = ["-DX=0"]     more flags for those
+  gen = ["tools/places.py --out {gen}/places.h"]   the app's generators, run before the build (relative to APP_DIR;
+                             {gen} is the generated headers' directory, on the include path)
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
@@ -197,6 +201,13 @@ def generate():
         if r.returncode:
             sys.stderr.write(r.stderr)
             raise SystemExit(f"build: {c[0].name} failed")
+    for line in CONF.get("gen", []):          # the app's own generators: a script (relative to APP_DIR) and its arguments
+        c = [a.replace("{gen}", str(GEN)) for a in line.split()]
+        r = subprocess.run([sys.executable, str(APP / c[0]), *c[1:]], cwd=APP, capture_output=True, text=True)
+        sys.stdout.write(r.stdout)
+        if r.returncode:
+            sys.stderr.write(r.stderr)
+            raise SystemExit(f"build: {c[0]} failed")
 
 
 # ---- update loader
@@ -372,12 +383,14 @@ def radio_units():
         for f in (SRC / "ble" / "wifi").glob("*.c"):
             units.append(("cc", *BLE_CF, *LWIP_CF, *lwip_inc, "-c", f, "-o", o / ("wifi_" + f.stem + ".o")))
             objs.append(o / ("wifi_" + f.stem + ".o"))
-        app_inc = inc(APP, SRC / "include", *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))
+        app_inc = inc(APP, SRC / "include", GEN, *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])
+                                                     + CONF.get("net_include", [])))
         for u in CONF.get("net", []):            # the app's network code: as the SDK builds code that talks lwIP
-            f = APP / u
-            units.append(("cc", *BLE_CF, *LWIP_CF, *lwip_inc, *app_inc, "-c", f,
-                          "-o", o / ("net_" + u.replace("/", "_").rsplit(".", 1)[0] + ".o")))
-            objs.append(o / ("net_" + u.replace("/", "_").rsplit(".", 1)[0] + ".o"))
+            for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
+                name = "net_" + "_".join(f.relative_to(APP).with_suffix("").parts) + ".o"
+                units.append(("cc", *BLE_CF, *LWIP_CF, *CONF.get("net_cflags", []), *lwip_inc, *app_inc, "-c", f,
+                              "-o", o / name))
+                objs.append(o / name)
     linked = (BLE_LIBS if BLE else RADIO_LIBS) + WIFI_LIBS * WIFI
     libs = ["--start-group", *[dst / "lib" / f for f in linked], dst / "lib" / "libcompiler_rt.a", "--end-group"]
     return units, objs, libs
