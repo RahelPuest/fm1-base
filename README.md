@@ -89,14 +89,15 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
   stacks of 8 KB (the pool). The template with Bluetooth and devices is 210 KB of flash, 74 of 96 KB of RAM: room
   for a big app (CTL-1, with a General MIDI synth, is 491 KB).
 - WiFi: JieLi's driver (146 KB), the WPA supplicant (77 KB), lwIP (51 KB), the radio layer, crypto and the shim
-  (25 KB) in the flash; the driver's buffers, lwIP and the shim's task table (about 100 KB) in the RAM; a 248 KB
-  heap and lwIP's packet buffers (28 KB) in the pool. The heap holds the WiFi library's own buffers (about 60 KB)
-  and its tasks' stacks (8 KB each as a task starts: about 6), and what is left is the app's (`malloc`; fm1-radio's
-  player and HTTPS stream peak at 196 KB of it). That leaves an app about 170 KB of flash and a few KB of RAM.
+  (25 KB) in the flash; the driver's buffers, lwIP, the shim's task table and 24 KB of the heap (about 100 KB) in
+  the RAM; the rest of the heap (248 KB) and lwIP's packet buffers (28 KB) in the pool. The heap, 272 KB, holds the
+  WiFi library's own buffers (about 60 KB) and its tasks' stacks (4 to 8 KB each, by task, as a task starts: about
+  6), and what is left is the app's (`malloc`; fm1-radio's HE-AAC player and HTTPS stream peak at 256 KB of it).
+  That leaves an app about 170 KB of flash and a few KB of RAM.
   WiFi calibrates its radio at every start (a kept calibration was Bluetooth's, which the access point could not
-  hear). `examples/wifi` is 410 KB of
-  flash, 120 of 128 KB of RAM and 299 of 304 KB of pool; fm1-radio (an MP3 decoder, HTTPS, 78 KB of places) is
-  549 KB, 127 KB and 300 KB.
+  hear). `examples/wifi` is 420 KB of
+  flash, 119 of 128 KB of RAM and 299 of 304 KB of pool; fm1-radio (MP3 and HE-AAC decoders, HTTPS) is
+  576 KB, 127 KB and 300 KB.
 - In a WiFi build, fm1-base's large font (the splash's name, the panel's screens) can go too:
   `#define APP_BIG_FONT FONT_M` in app.h saves 20 KB of flash.
 
