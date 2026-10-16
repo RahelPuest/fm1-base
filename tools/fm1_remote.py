@@ -14,7 +14,8 @@ or by a program (an agent). Needs mido with python-rtmidi.
     screen                                  what is on the screen, in words (the screen reader's channel)
     log                                     the last crash and Bluetooth's log (both survive a restart)
     release-all                             every button and key up, MASTER the pot's own
-    reboot                                  restart it (as intended: Bluetooth starts again); then waits for USB
+    reboot | reboot-safe                    restart it (as intended: Bluetooth starts again), or into safe mode to
+                                            test it; then waits for USB
   e.g.  tools/fm1_remote.py tap REC wait 800 screen
 
 The firmware's side: device/main_fm1.c remote_frame (F0 7D 4C 43 ...) and log_frame (F0 7D 4C 47), and the screen
@@ -133,8 +134,8 @@ class FM1:
                     if f != b"end":
                         print("log:", f.decode("latin1", "replace"))
                 i += 1
-            elif c == "reboot":
-                self.sysex(LC + [5])
+            elif c in ("reboot", "reboot-safe"):
+                self.sysex(LC + [5, 1] if c == "reboot-safe" else LC + [5])
                 time.sleep(1.0)
                 self.out.close()
                 self.inp.close()
