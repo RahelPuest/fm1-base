@@ -331,6 +331,127 @@ static int remote_frame(const uint8_t *p, uint32_t n)
     return 1;
 }
 
+#if FM1B_WIFI
+/* WiFi over USB (passwords cannot be typed on the FM-1): F0 7D 4C 57 ("LW") op ... F7. Text goes as nibbles (each
+ * byte two: high, low), the answers as plain 7-bit text, a line a frame (F0 7D 4C 57 10 <text> F7), then
+ * F0 7D 4C 57 11 F7:
+ *   1 on   2 off   3 scan
+ *   4 status        "<state> <ssid> <ip> <rssi> <why>"
+ *   5 the networks kept, one a line, the most recent first
+ *   6 i             forget network i
+ *   7 ssid 0 pass   join it with that password (nibbles; kept once joined); no password: a kept one's, or none
+ *   8 the scan's networks, "<rssi> <secured> <ssid>" a line, the strongest first */
+static void wifi_line(const char *t)
+{
+    uint8_t f[48];
+    uint32_t n = 0;
+    f[n++] = 0xF0; f[n++] = 0x7D; f[n++] = 0x4C; f[n++] = 0x57; f[n++] = 0x10;
+    while (*t && n < sizeof f - 1u)
+        f[n++] = (uint8_t)(*t++ & 0x7Fu);
+    f[n++] = 0xF7;
+    ota_wire_send(f, n);
+}
+static char *wifi_cat(char *q, const char *t, char *end)
+{
+    while (*t && q < end)
+        *q++ = *t++;
+    *q = 0;
+    return q;
+}
+static char *wifi_num(char *q, int32_t v, char *end)
+{
+    char t[12];
+    int k = 0;
+    uint32_t u = v < 0 ? (uint32_t)-v : (uint32_t)v;
+    if (v < 0 && q < end)
+        *q++ = '-';
+    do {
+        t[k++] = (char)('0' + u % 10u);
+        u /= 10u;
+    } while (u);
+    while (k && q < end)
+        *q++ = t[--k];
+    *q = 0;
+    return q;
+}
+static int wifi_frame(const uint8_t *p, uint32_t n)
+{
+    static const char *const ST[] = {"off", "starting", "on", "joining", "address", "connected", "failed"};
+    static const uint8_t end[6] = {0xF0, 0x7D, 0x4C, 0x57, 0x11, 0xF7};
+    char b[44], *e = b + sizeof b - 1, *q;
+    int i;
+    if (n < 4u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x57u)
+        return 0;
+    switch (p[3]) {
+    case 1: plat_wifi_on(1); break;
+    case 2: plat_wifi_on(0); break;
+    case 3: plat_wifi_scan(); break;
+    case 4: {
+        uint32_t ip = plat_wifi_ip();
+        int st = plat_wifi_state();
+        q = wifi_cat(b, st >= 0 && st <= WIFI_FAILED ? ST[st] : "?", e);
+        q = wifi_cat(q, " ", e);
+        q = wifi_cat(q, plat_wifi_ssid()[0] ? plat_wifi_ssid() : "-", e);
+        for (i = 0; i < 4; i++) {
+            q = wifi_cat(q, i ? "." : " ", e);
+            q = wifi_num(q, (int32_t)(ip >> (8 * i) & 255u), e);
+        }
+        q = wifi_cat(q, " ", e);
+        q = wifi_num(q, plat_wifi_rssi(), e);
+        q = wifi_cat(q, " ", e);
+        wifi_cat(q, plat_wifi_why(), e);
+        wifi_line(b);
+        break;
+    }
+    case 5:
+        for (i = 0; plat_wifi_saved(i, b); i++)
+            wifi_line(b);
+        break;
+    case 6:
+        if (n >= 5u)
+            plat_wifi_forget(p[4]);
+        break;
+    case 7: {                                    /* ssid 0 pass, as nibbles */
+        static char ssid[33], pass[64];
+        char *d = ssid;
+        uint32_t k, len = 0, max = sizeof ssid - 1u, have_pass = 0;
+        for (k = 4; k + 1u < n; k += 2) {
+            char c = (char)((p[k] & 15u) << 4 | (p[k + 1] & 15u));
+            if (!c && d == ssid) {
+                ssid[len] = 0;
+                d = pass;
+                len = 0;
+                max = sizeof pass - 1u;
+                have_pass = 1;
+                continue;
+            }
+            if (len < max)
+                d[len++] = c;
+        }
+        d[len] = 0;
+        plat_wifi_join(ssid, have_pass ? pass : 0);
+        break;
+    }
+    case 8:
+        for (i = 0; ; i++) {
+            char ssid[33];
+            int rssi, sec;
+            if (!plat_wifi_found(i, ssid, &rssi, &sec))
+                break;
+            q = wifi_num(b, rssi, e);
+            q = wifi_cat(q, sec ? " 1 " : " 0 ", e);
+            wifi_cat(q, ssid, e);
+            wifi_line(b);
+        }
+        break;
+    default:
+        break;
+    }
+    ota_wire_send(end, sizeof end);
+    return 1;
+}
+#endif
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
@@ -530,6 +651,9 @@ static void fm1_main(void)
         }
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */
+#if FM1B_WIFI
+        wifi_poll();                                /* WiFi's tasks, once on */
+#endif
         fm1b_dbg.stage = 3;
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
@@ -556,7 +680,11 @@ static void fm1_main(void)
         {   /* a screen reader's SysEx (announce.c), before the updater looks */
             const uint8_t *p;
             uint32_t n;
-            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)))
+            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)
+#if FM1B_WIFI
+                                          || wifi_frame(p, n)
+#endif
+                                          ))
                 ota_frame_done();
         }
         fm1b_dbg.stage = 4;

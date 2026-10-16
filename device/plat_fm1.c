@@ -127,6 +127,9 @@ void plat_unlock(uint32_t f)
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
+#if FM1B_WIFI
+    wifi_poll();                                  /* WiFi's tasks, once on */
+#endif
 #ifdef APP_YIELD
     app_yield();
 #endif

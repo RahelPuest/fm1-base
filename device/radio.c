@@ -54,19 +54,44 @@ void shim_irq_restore(uint32_t f)
         fm1_irq_on();
     }
 }
+#if SHIM_WIFI
+/* the nesting is each task's own, as FreeRTOS keeps it: a task that waits inside a critical section must not leave
+ * the interrupts off for the others (os.c switch_to; fm1-radio's) */
+uint32_t shim_irq_depth(void) { return shim_depth; }
+uint32_t shim_irq_hold(void)
+{
+    fm1_irq_off();
+    return shim_depth;
+}
+void shim_irq_resume(uint32_t depth)
+{
+    shim_depth = depth;
+    if (!depth)
+        fm1_irq_on();
+}
+int shim_in_irq(void) { return fm1_sp_in_isr(); }   /* a wait asked for there is refused (os.c) */
+#else
 int shim_in_irq(void) { return 0; }
+#endif
 volatile uint32_t shim_isr_blocks;               /* waits refused in an interrupt (os.c; with SHIM_WIFI only) */
 /* every task waits: run what is due (a timer may be what they wait for) and keep the watchdog fed,
  * whichever context we are in (btstack_init waits in the main loop's) */
 static void radio_stuck_check(void);
+static void (*radio_idle_hook)(void);             /* while every task waits: what must still be answered (USB) */
 void shim_idle(void)
 {
     static uint8_t in;
     fm1_wdt_feed();
     if (!in) {
         in = 1;
+#if SHIM_WIFI
+        shim_timers_post();                       /* timers to their owners: never a callback inside a task's wait */
+#else
         shim_timers();
+#endif
         radio_stuck_check();
+        if (radio_idle_hook)
+            radio_idle_hook();
         in = 0;
     }
 }
@@ -262,6 +287,18 @@ static uint8_t irqs_masked;
  * of fm1-ble): the trim itself runs from RAM, but CTL-1's GM synth read its code and 200 KB of samples from
  * the flash in the audio interrupt, ~30% of the time, and crashed there 0.2 s into the start. */
 static volatile uint8_t radio_quiet;
+#if SHIM_WIFI
+extern int os_taskq_pend(const char *fmt, int *argv, int argc);
+/* the SDK's "sys_timer" task: timers added to it (and the WiFi library's posts) arrive as [Q_CALLBACK, fn, args],
+ * which os_taskq_pend runs */
+static void sys_timer_task(void *p)
+{
+    int m[8];
+    (void)p;
+    for (;;)
+        os_taskq_pend("taskq", m, 8);
+}
+#endif
 static void radio_begin(const char *what)
 {
     static uint8_t os_up;
@@ -289,6 +326,9 @@ static void radio_begin(const char *what)
         os_up = 1;
         shim_os_init();
         fm1_guard_stack_floor(shim_stacks_lo());  /* the tasks' stacks are in the pool */
+#if SHIM_WIFI
+        task_create(sys_timer_task, 0, "sys_timer");
+#endif
     }
 }
 /* the main loop: the render back a second into the start once the radio is ready (or after 15 s), and the input
