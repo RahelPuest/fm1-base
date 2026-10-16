@@ -184,3 +184,11 @@ void app_frame(void)
         draw();
     }
 }
+
+#ifdef PLAT_HOST
+/* the host simulator has no lwIP (net.c is the device's): the fetch answers at once */
+int net_fetch(const char *host, const char *path) { (void)host, (void)path; return 0; }
+int net_busy(void) { return 0; }
+const char *net_result(void) { return "HTTP/1.0 200 OK (host)"; }
+uint32_t net_bytes(void) { return 1256; }
+#endif
