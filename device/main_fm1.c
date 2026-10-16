@@ -242,7 +242,6 @@ static int log_frame(const uint8_t *p, uint32_t n)
  *   2 k0 k1 k2 k3    the keys held (bit k = key k, seven bits a byte, low first)
  *   3 role delta     an encoder turned (EN_*; delta - 64 detents)
  *   4 lo hi          MASTER's position (0..4096, seven bits a byte; 4097 or more: the pot's own again)
- *   5 [1]            restart (an intentional one: Bluetooth starts again); 5 1: into safe mode, to test it
  * Each is added to the panel's own input (plat_fm1.c remote); the answer is F0 7D 4C 43 op F7. */
 static int remote_frame(const uint8_t *p, uint32_t n)
 {
@@ -269,20 +268,6 @@ static int remote_frame(const uint8_t *p, uint32_t n)
             remote.master = v > 4096u ? -1 : (int32_t)v;
         }
         break;
-    case 5: {                                       /* restart through the core reset updates use (P33's, from
-                                                     * here, hung and left it to the watchdog); 5 1: into safe mode */
-        static const uint8_t none[FM1_UPDATA_PARM_LEN];   /* an empty update record: the SPL starts the app */
-        usb_detach();
-        fm1_delay_ms(30);
-        bootguard.pending = 0;
-        if (n >= 5u && p[4] == 1u) {
-            bootguard.failed = 1;                   /* the next start counts as the second failed one: safe mode */
-            bootguard.pending = 1;
-        }
-        ble_clean_exit();                           /* (only now: the restart is under way) */
-        fm1_enter_update(none);
-        break;
-    }
     default:
         return 1;
     }
@@ -423,6 +408,8 @@ static void fm1_main(void)
         memset(&fm1b_dbg, 0, sizeof fm1b_dbg);
         fm1b_dbg.magic = DBG_MAGIC;
     }
+    fm1b_dbg.in_audio = 0;                          /* (.noinit: a crash inside the render left it set, and safe mode,
+                                                     * with no render to clear it, then never polled USB) */
     if (safe_mode)
         safe_main();                                /* never returns */
     if (fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != fm1b_dbg.crash_seen) {
