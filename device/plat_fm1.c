@@ -101,16 +101,28 @@ void plat_leds(uint32_t buttons, uint32_t keys)    /* PLAY green, unless red (re
  * nests; MIDI sent from the tick itself needs none (nothing that sends interrupts it) */
 static volatile uint8_t in_tick;
 static uint32_t lock_depth;
+uint32_t lock_max, lock_from;                     /* the longest the app kept interrupts off (us), and from where */
+static uint32_t lock_t0, lock_ra;
 uint32_t plat_lock(void)
 {
     fm1_irq_off();
+    if (lock_depth == 0) {
+        lock_t0 = fm1_ticks();
+        lock_ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    }
     return lock_depth++;
 }
 void plat_unlock(uint32_t f)
 {
     (void)f;
-    if (lock_depth && --lock_depth == 0)
+    if (lock_depth && --lock_depth == 0) {
+        uint32_t us = (fm1_ticks() - lock_t0) / FM1_TICKS_PER_US;
+        if (us > lock_max) {
+            lock_max = us;
+            lock_from = lock_ra;
+        }
         fm1_irq_on();
+    }
 }
 void plat_yield(void)
 {

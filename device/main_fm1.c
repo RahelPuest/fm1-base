@@ -106,7 +106,7 @@ static void audio_silence(void)                     /* IRQs off (flash erase): t
 
 /* ------------------------------------------------------------ timer --- */
 static uint8_t usb_due;
-static uint32_t t5_gap_max, t5_late;                /* the longest gap between ticks (us), and gaps over 300 us:
+static uint32_t t5_gap_max, t5_late, t5_run_max;                /* the longest gap between ticks (us), and gaps over 300 us:
                                                      * the key and light scan held up (the log reads and clears) */
 void fm1_timer5_irq(void)
 {
@@ -155,6 +155,11 @@ void fm1_timer5_irq(void)
 #endif
     if (++sub == 10u)
         sub = 0;
+    {
+        uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;
+        if (run > t5_run_max)
+            t5_run_max = run;
+    }
     {
         static uint32_t last, acc;
         uint32_t now = fm1_ticks();
@@ -246,12 +251,18 @@ static int log_frame(const uint8_t *p, uint32_t n)
         log_line_send(plat_ble_log_line(k));
     }
     {
-        static const char *const L[2] = {"scan gap max us ", " late "};
-        const uint32_t v[2] = {t5_gap_max, t5_late};
+        extern uint32_t lock_max, lock_from;
+        static const char *const L[5] = {"scan gap ", " late ", " tick ", "lock ", " from "};
+        const uint32_t v[5] = {t5_gap_max, t5_late, t5_run_max, lock_max, lock_from};
         uint32_t i;
         q = b;
-        for (i = 0; i < 2u; i++) {
+        for (i = 0; i < 5u; i++) {
             const char *l = L[i];
+            if (i == 3u) {                           /* two lines: a frame holds ~40 characters */
+                *q = 0;
+                log_line_send(b);
+                q = b;
+            }
             while (*l)
                 *q++ = *l++;
             hexs(q, v[i]);
@@ -259,7 +270,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
         *q = 0;
         log_line_send(b);
-        t5_gap_max = t5_late = 0;
+        t5_gap_max = t5_late = t5_run_max = lock_max = 0;
     }
 #if FM1B_BLE
     {
