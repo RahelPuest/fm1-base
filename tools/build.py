@@ -7,7 +7,8 @@
   tools/build.py APP_DIR [--release X.Y[.Z][-suffix]] [--no-ble]
   tools/build.py APP_DIR --host        the host simulator instead: APP_DIR/build/host/NAME_host (cc, no toolchain)
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
-                                       simulator alone (panel, screen, sound, screen reader), for a site to link or frame
+                                       simulator alone (panel, screen, sound, screen reader), for a site to link or frame;
+                                       an app may bring its own (APP_DIR/web/emu/index.html, worklet.js)
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -493,10 +494,13 @@ def build_web():
     sys.stderr.write(r.stderr)
     if r.returncode:
         raise SystemExit("build: the emulator did not compile (emcc: Emscripten)")
-    page = (SRC / "web" / "emu" / "index.html").read_text()
+    # the page: the app's own (APP_DIR/web/emu/index.html, worklet.js), or fm1-base's
+    web = {f: (APP / "web" / "emu" / f if (APP / "web" / "emu" / f).exists() else SRC / "web" / "emu" / f)
+           for f in ("index.html", "worklet.js")}
+    page = web["index.html"].read_text()
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
     (emu / "index.html").write_text(page)
-    shutil.copy(SRC / "web" / "emu" / "worklet.js", emu / "worklet.js")
+    shutil.copy(web["worklet.js"], emu / "worklet.js")
     found = [d for d in (SRC.parent / "fm1-reader" / "web", SRC.parent / "fm1-parent" / "fm1-reader" / "web") if d.is_dir()]
     reader = Path(os.environ.get("FM1_READER", found[0] if found else SRC.parent / "fm1-reader" / "web"))
     if (reader / "words.js").exists() and (reader / "espeak" / "espeak.wasm").exists():
