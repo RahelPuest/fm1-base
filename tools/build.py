@@ -20,6 +20,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   device_include = ["inc"]   include directories for the firmware only (headers the toolchain lacks)
   mmio_skip = ["dsp/lib/"]   paths whose numbers are not addresses (a library's tables): the register check skips
                              its address literals there (still checks casts, asm and register macros)
+  vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
+                             by flags: the register check skips them entirely (it reads the text: x86 asm behind
+                             an #if would fail it)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
@@ -556,7 +559,8 @@ def mmio_check():
     errors = []
     skip = CONF.get("mmio_skip", [])
     files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"), *(SRC / "lib").glob("*.[ch]"),
-             *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts]]
+             *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts
+               and not any(str(f.relative_to(APP)).startswith(v) for v in CONF.get("vendored", []))]]
     for f in sorted(files):
         for no, ln in enumerate(strip(f.read_text()).splitlines(), 1):
             where = f"{f.relative_to(ROOT)}:{no}"
