@@ -160,6 +160,102 @@ static void hexs(char *b, uint32_t v)
     b[8] = 0;
 }
 
+/* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), then Bluetooth's log, the oldest
+ * first (it survives a reset) */
+static void log_line_send(const char *t)
+{
+    uint8_t f[48];
+    uint32_t n = 0;
+    f[n++] = 0xF0; f[n++] = 0x7D; f[n++] = 0x4C; f[n++] = 0x47;
+    while (*t && n < sizeof f - 1u)
+        f[n++] = (uint8_t)(*t++ & 0x7Fu);
+    f[n++] = 0xF7;
+    ota_wire_send(f, n);
+}
+static int log_frame(const uint8_t *p, uint32_t n)
+{
+    char b[48], *q;
+    int k;
+    if (n < 3u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x47u)
+        return 0;
+    if (fm1_crash.magic == FM1_CRASH_MAGIC) {
+        const uint32_t v[6] = {fm1_crash.count, fm1_crash.vec, fm1_crash.pc, fm1_crash.rets, fm1_crash.sp,
+                               fm1_crash.uptime_ms};
+        static const char *const L[6] = {"crash n ", " vec ", " pc ", " rets ", " sp ", " ms "};
+        uint32_t i;
+        q = b;
+        for (i = 0; i < 3u; i++) {
+            const char *l = L[i];
+            while (*l)
+                *q++ = *l++;
+            hexs(q, v[i]);
+            q += 8;
+        }
+        *q = 0;
+        log_line_send(b);
+        q = b;
+        for (i = 3; i < 6u; i++) {
+            const char *l = L[i] + 1;
+            while (*l)
+                *q++ = *l++;
+            hexs(q, v[i]);
+            q += 8;
+            *q++ = ' ';
+        }
+        *q = 0;
+        log_line_send(b);
+    } else {
+        log_line_send("no crash recorded");
+    }
+    for (k = (int)plat_ble_log_total() - 1; k >= 0; k--) {
+        if (!plat_ble_log_line(k)[0])
+            continue;                                /* (beyond what the log keeps) */
+        log_line_send(plat_ble_log_line(k));
+    }
+    log_line_send("end");
+    return 1;
+}
+
+/* remote control: F0 7D 4C 43 ("LC") op ... F7, 7-bit bytes:
+ *   1 b0 b1          the buttons held (B_* bits: b0 the low seven, b1 the next seven)
+ *   2 k0 k1 k2 k3    the keys held (bit k = key k, seven bits a byte, low first)
+ *   3 role delta     an encoder turned (EN_*; delta - 64 detents)
+ *   4 lo hi          MASTER's position (0..4096, seven bits a byte; 4097 or more: the pot's own again)
+ * Each is added to the panel's own input (plat_fm1.c remote); the answer is F0 7D 4C 43 op F7. */
+static int remote_frame(const uint8_t *p, uint32_t n)
+{
+    static uint8_t ack[6] = {0xF0, 0x7D, 0x4C, 0x43, 0, 0xF7};
+    if (n < 4u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x43u)
+        return 0;
+    switch (p[3]) {
+    case 1:
+        if (n >= 6u)
+            remote.btn = ((uint32_t)p[4] | (uint32_t)p[5] << 7) & ((1u << NB) - 1u);
+        break;
+    case 2:
+        if (n >= 8u)
+            remote.keys = ((uint32_t)p[4] | (uint32_t)p[5] << 7 | (uint32_t)p[6] << 14 | (uint32_t)p[7] << 21) &
+                          ((1u << NKEYS) - 1u);
+        break;
+    case 3:
+        if (n >= 6u && p[4] < NE)
+            remote.enc[p[4]] += (int32_t)p[5] - 64;
+        break;
+    case 4:
+        if (n >= 6u) {
+            uint32_t v = (uint32_t)p[4] | (uint32_t)p[5] << 7;
+            remote.master = v > 4096u ? -1 : (int32_t)v;
+        }
+        break;
+    default:
+        return 1;
+    }
+    ack[4] = p[3];
+    ota_wire_send(ack, sizeof ack);
+    return 1;
+}
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
@@ -341,7 +437,7 @@ static void fm1_main(void)
             int32_t a = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.master : fm1_adc_read(FM1_ADC_MASTER);
             if (a >= 0) {
                 knob += (a * 16 - knob) / 8;
-                master_pos = (uint32_t)(knob / 4);
+                master_pos = remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4);
             }
         }
         ble_poll();                                 /* Bluetooth's tasks, once started */
@@ -370,7 +466,7 @@ static void fm1_main(void)
         {   /* a screen reader's SysEx (announce.c), before the updater looks */
             const uint8_t *p;
             uint32_t n;
-            if (ota_frame_get(&p, &n) && ann_frame(p, n, fm1_ms))
+            if (ota_frame_get(&p, &n) && (ann_frame(p, n, fm1_ms) || log_frame(p, n) || remote_frame(p, n)))
                 ota_frame_done();
         }
         ota_service();                              /* M-UPGRADE handshake (other SysEx is dropped) */

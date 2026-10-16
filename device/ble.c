@@ -53,7 +53,7 @@ void shim_request_irq(int index, int prio, void (*handler)(void))
 
 /* a short log for the screen, kept through a reset (.noinit): after a crash the app can show
  * what the last run said, and a crash note */
-#define BLE_LOG_N 12
+#define BLE_LOG_N 32
 #define BLE_LOG_MAGIC 0x424C4532u                 /* "BLE2" */
 static struct {
     uint32_t magic, w, crash_seen, running, repeat, t0_up;   /* running: a BT run was on (cleared at boot) */
@@ -358,8 +358,9 @@ static void ble_start(void)
     ble_state = BLE_STARTING;
     if (fm1_crash.magic != FM1_CRASH_MAGIC)
         fm1_crash.count = 0;
+    if (blog.magic != BLE_LOG_MAGIC || blog.w > 100000u)
+        blog.w = 0;                               /* (else the log goes on: the last run's crash note stays readable) */
     blog.magic = BLE_LOG_MAGIC;
-    blog.w = 0;
     blog.crash_seen = fm1_crash.count;
     blog.running = 1;
     ble_t0 = blog.t0_up = fm1_uptime_ms();

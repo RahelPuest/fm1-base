@@ -303,9 +303,28 @@ def ble_units():
     o.mkdir(parents=True, exist_ok=True)
     units = [("cc", "-c", SRC / "ble" / "shim" / "ctx.S", "-o", o / "ctx.o")]
     objs = [o / "ctx.o"]
-    if CONF.get("ble_central"):                   # one link as a peripheral and one as a central (the SDK's multi-link)
-        flags += ["-DBLE_MIDI_CENTRAL=1", "-DTRANS_MULTI_BLE_EN=1", "-DTRANS_MULTI_BLE_SLAVE_NUMS=1",
-                  "-DTRANS_MULTI_BLE_MASTER_NUMS=1"]
+    # the SDK demo's app_config.h picks its BLE demo with #defines (a -D cannot override them): the peripheral alone
+    # (TRANS_DATA_EN), or with ble_central one link as a peripheral and one as a central (TRANS_MULTI_BLE_EN: the
+    # controller's link count, the multi-link stack). Written from the SDK's each build, as this one wants it
+    cfg = "apps/demo/demo_ble/include/app_config.h"
+    text = (sdk / cfg).read_text(errors="ignore")
+    if CONF.get("ble_central"):
+        flags.append("-DBLE_MIDI_CENTRAL=1")
+        for old, new in (("#define TRANS_DATA_EN                             1",
+                          "#define TRANS_DATA_EN                             0"),
+                         ("#define TRANS_MULTI_BLE_EN                        0",
+                          "#define TRANS_MULTI_BLE_EN                        1"),
+                         ("#define TRANS_MULTI_BLE_SLAVE_NUMS                2",
+                          "#define TRANS_MULTI_BLE_SLAVE_NUMS                1"),
+                         ("#define TRANS_MULTI_BLE_MASTER_NUMS               2",
+                          "#define TRANS_MULTI_BLE_MASTER_NUMS               1")):
+            if old not in text:
+                raise SystemExit(f"build: {cfg} in the SDK has changed: no {old!r}")
+            text = text.replace(old, new)
+    if (dst / cfg).read_text(errors="ignore") != text:
+        (dst / cfg).write_text(text)
+        for f in o.glob("*.o"):
+            f.unlink()                            # (built for the other configuration)
     for f in [*(SRC / "ble" / "shim").glob("*.c"), *(SRC / "ble" / "midi").glob("*.c"), *[dst / s for s in BLE_SDK_SRC]]:
         units.append(("cc", *BLE_CF, *flags, "-c", f, "-o", o / (f.stem + ".o")))
         objs.append(o / (f.stem + ".o"))

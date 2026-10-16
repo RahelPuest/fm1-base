@@ -90,6 +90,7 @@ static uint32_t lit_btn, lit_keys, dim_btn, dim_keys;
 uint32_t plat_ms(void) { return now_ms; }
 uint32_t plat_buttons(void) { return held_btn; }
 uint32_t plat_keys(void) { return held_keys; }
+static uint32_t plat_remote_keys(void) { return 0; }   /* (the device's remote control: the script is this one's) */
 int32_t plat_enc(int role)
 {
     int32_t v = enc_acc[role];

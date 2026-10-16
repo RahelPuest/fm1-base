@@ -140,7 +140,7 @@ uint32_t touch_keys(void)
         return k;
     for (i = 0; i < NKEYS; i++)
         mask |= (uint32_t)sense_is_analog(i) << i;
-    return (k & ~mask) | touch_held;
+    return (k & ~mask) | touch_held | plat_remote_keys();   /* (remote keys: as pressed, no reading) */
 }
 uint8_t touch_vel(uint32_t key)
 {
