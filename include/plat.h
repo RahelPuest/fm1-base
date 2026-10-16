@@ -80,6 +80,10 @@ int plat_ble_found(int i, char *name, int *rssi);   /* device i of the scan (nam
 int plat_ble_connect(int i);           /* 0 = connecting */
 void plat_ble_disconnect(void);
 int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI both ways */
+/* Bluetooth on or off, as the player asks: off ends every link, stops advertising and scanning (the radio quiet);
+ * on starts it (or advertises again). Whether it starts at power-on: APP_BLE_AT_BOOT (app.h, e.g. a saved setting;
+ * default 1) */
+void plat_ble_enable(int on);
 
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share (it nests) */

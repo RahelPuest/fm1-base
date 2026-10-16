@@ -21,6 +21,9 @@
 #ifndef APP_VERSION
 #define APP_VERSION "DEV"                /* a release build passes its own (tools/build.py --release) */
 #endif
+#ifndef APP_BLE_AT_BOOT
+#define APP_BLE_AT_BOOT 1                /* Bluetooth starts at power-on (an app's setting may say no) */
+#endif
 #ifndef APP_BLOCK
 #define APP_BLOCK 256u                   /* frames per audio half and render: 5.8 ms at 44.1 kHz */
 #endif

@@ -419,8 +419,9 @@ static void fm1_main(void)
         panel_setup();                              /* OCT- + OCT+ held at power-on */
     fm1_delay_ms(400);
     ble_boot_note();                                /* what ended the last Bluetooth run, into its log */
-    if (!ble_last_bad)
-        ble_start();                                /* Bluetooth is on, as on the stock firmware */
+    if (!ble_last_bad && APP_BLE_AT_BOOT)
+        ble_start();                                /* Bluetooth is on, as on the stock firmware (unless the app's
+                                                     * setting says off: APP_BLE_AT_BOOT) */
 #ifdef APP_BOOT
     app_boot();                                     /* the app's own start (a radio), the platform up */
 #endif

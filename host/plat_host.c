@@ -226,6 +226,17 @@ void plat_ble_disconnect(void)
     bdev_state = BLE_DEV_OFF;
 }
 int plat_ble_device(void) { return bdev_state; }
+void plat_ble_enable(int on)
+{
+    if (!on) {
+        bdev_state = BLE_DEV_OFF;
+        ble_conn = 0;
+        ble_state = BLE_OFF;
+        ble_say("switched off");
+    } else {
+        plat_ble_start();
+    }
+}
 uint32_t plat_ble_log_total(void) { return ble_log_n; }
 const char *plat_ble_log_line(int back)
 {
@@ -456,7 +467,8 @@ static void boot(void)
     ble_state = BLE_OFF;                            /* Bluetooth starts at every boot, as on the device */
     ble_conn = 0;
     bdev_state = BLE_DEV_OFF;
-    plat_ble_start();
+    if (APP_BLE_AT_BOOT)
+        plat_ble_start();
 #ifdef APP_BOOT
     app_boot();
 #endif

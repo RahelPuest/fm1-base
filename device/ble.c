@@ -423,8 +423,20 @@ static void ble_poll(void)
 
 /* ---- plat.h */
 extern int ble_midi_peripheral_connected(void);
-int plat_ble_state(void) { return ble_state; }
-int plat_ble_connected(void) { return ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+extern void ble_midi_enable(int on);
+static uint8_t ble_off;                           /* switched off by the player (plat_ble_enable) */
+int plat_ble_state(void) { return ble_off ? BLE_OFF : ble_state; }
+int plat_ble_connected(void) { return !ble_off && ble_state == BLE_READY && ble_midi_peripheral_connected(); }
+void plat_ble_enable(int on)
+{
+    ble_off = (uint8_t)!on;
+    if (on && ble_state == BLE_OFF)
+        ble_start();                              /* (off at power-on, or after a crash) */
+    else if (ble_state == BLE_READY)
+        ble_midi_enable(on);
+    if (!on)
+        shim_log("switched off");
+}
 #if FM1B_BLE_CENTRAL
 extern void ble_midi_scan(int on);
 extern int ble_midi_found(int i, char *name, int *rssi);

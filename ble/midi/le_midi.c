@@ -770,6 +770,25 @@ void bt_ble_init(void)
     bt_ble_adv_enable(1);
     os_mutex_post(&mutex);
 }
+/* Bluetooth switched off or on by the player (the stack stays up): off ends every link, stops advertising and
+ * scanning, so the radio goes quiet; on advertises again */
+void ble_midi_enable(int on)
+{
+    os_mutex_pend(&mutex, 0);
+    if (on) {
+        adv_ctrl_en = 1;
+        bt_ble_adv_enable(1);
+        os_mutex_post(&mutex);
+        return;
+    }
+    os_mutex_post(&mutex);
+#if BLE_MIDI_CENTRAL
+    ble_midi_scan(0);
+    ble_midi_disconnect();
+#endif
+    bt_ble_exit();
+}
+
 void bt_ble_exit(void)
 {
     os_mutex_pend(&mutex, 0);
