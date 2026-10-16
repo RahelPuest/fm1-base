@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <string.h>
 #include "shim.h"
+#include <stddef.h>
+void *malloc(size_t n);
 
 /* SHIM_WIFI (fm1.toml wifi = true): JieLi's OS as the WiFi library needs it (fm1-radio's): ten more tasks, each with
  * its own interrupt nesting (unless SHIM_GLOBAL_IRQ), timers run by the task that added them, os_time_dly(0) a
@@ -46,8 +48,32 @@ typedef struct {
 } task_t;
 
 static task_t tasks[NTASK];
+#if SHIM_WIFI
+/* WiFi: a slot's stack from the heap when its first task starts, kept with the slot (a killed task's stack may still
+ * be pointed into): slots the library never uses cost nothing, and their room is the heap's (fm1-radio's HTTPS
+ * stream ran it out with 13 stacks fixed in the pool) */
+static uint32_t *stk[NTASK - 1];
+#define STACK(i) stk[(i) - 1]
+extern void *shim_heap_base(void);
+uint32_t shim_stacks_lo(void) { return (uint32_t)(uintptr_t)shim_heap_base(); }
+static int stack_get(int i)
+{
+    if (!STACK(i)) {
+        uint8_t *p = malloc(STACK_WORDS * 4u + 8u);
+        if (!p) {
+            shim_log("task: no memory for a stack");
+            return -1;
+        }
+        STACK(i) = (uint32_t *)(((uintptr_t)p + 7u) & ~(uintptr_t)7u);   /* 8-aligned */
+    }
+    return 0;
+}
+#else
 static uint32_t stacks[NTASK - 1][STACK_WORDS] __attribute__((aligned(8), section(".pool")));
+#define STACK(i) stacks[(i) - 1]
 uint32_t shim_stacks_lo(void) { return (uint32_t)(uintptr_t)&stacks[0][0]; }
+static int stack_get(int i) { (void)i; return 0; }
+#endif
 task_t *shim_cur = &tasks[0];
 uint32_t shim_task_now __attribute__((section(".noinit")));   /* the task running (a watchdog reset's breadcrumb) */
 static uint32_t ticks_ms(void) { return shim_ms(); }
@@ -265,10 +291,10 @@ static int free_slot(void)
 int task_create(void (*fn)(void *), void *p, const char *name)
 {
     int i = free_slot(), k;
-    if (i) {
+    if (i && stack_get(i) == 0) {
             task_t *t = &tasks[i];
+            uint32_t *top = &STACK(i)[STACK_WORDS];
             killed_at[i] = 0;
-            uint32_t *top = &stacks[i - 1][STACK_WORDS];
             memset(t, 0, sizeof *t);
             for (k = 0; name && name[k] && k < (int)sizeof t->name - 1; k++)
                 t->name[k] = name[k];
@@ -276,7 +302,7 @@ int task_create(void (*fn)(void *), void *p, const char *name)
             t->fn = fn;
             t->arg = p;
             for (k = 0; k < STACK_WORDS - 13; k++)
-                stacks[i - 1][k] = 0x5354414Bu;          /* "STAK": how deep it went (shim_os_dump) */
+                STACK(i)[k] = 0x5354414Bu;               /* "STAK": how deep it went (shim_os_dump) */
             for (k = 1; k <= 13; k++)
                 top[-k] = (uint32_t)(uintptr_t)shim_task_entry;
             t->sp = (uint32_t)(uintptr_t)(top - 13);
@@ -324,9 +350,9 @@ void shim_task_end(int i)
 int shim_stack_depth(int i)
 {
     int u = 0;
-    if (i < 1 || i >= NTASK || !tasks[i].used)
+    if (i < 1 || i >= NTASK || !tasks[i].used || !STACK(i))
         return 0;
-    while (u < STACK_WORDS && stacks[i - 1][u] == 0x5354414Bu)
+    while (u < STACK_WORDS && STACK(i)[u] == 0x5354414Bu)
         u++;
     return (STACK_WORDS - u) * 4 / 256;
 }
@@ -352,7 +378,7 @@ void shim_os_dump(void)
             b[n++] = (char)('0' + (q_used(&tasks[i]) > 9 ? 9 : q_used(&tasks[i])));
             if (i) {                                    /* stack used, of 8 KiB, in 256-byte steps */
                 int u = 0;
-                while (u < STACK_WORDS && stacks[i - 1][u] == 0x5354414Bu)
+                while (STACK(i) && u < STACK_WORDS && STACK(i)[u] == 0x5354414Bu)
                     u++;
                 u = (STACK_WORDS - u) * 4 / 256;
                 b[n++] = ' ';

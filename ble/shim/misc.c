@@ -49,10 +49,9 @@ char *strcpy(char *d, const char *s)
 
 /* a first-fit heap with a size word before each block and a free list */
 #if SHIM_WIFI
-/* WiFi: 144 KB (lwIP, wpa, the driver's buffers), in the pool as fm1-radio has it (its layout is load-bearing:
- * moving its pools by a few KB broke reception, fm1-radio app.ld) */
+/* WiFi: 248 KB (lwIP, wpa, the driver's buffers, the tasks' stacks: os.c), in the pool */
 #ifndef SHIM_HEAP_KB
-#define SHIM_HEAP_KB 144u
+#define SHIM_HEAP_KB 248u
 #endif
 #define HEAP_BYTES (SHIM_HEAP_KB * 1024u)
 static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
@@ -64,6 +63,7 @@ static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
 static uint32_t heap[HEAP_BYTES / 4u];
 #endif
 const uint32_t shim_heap_size = HEAP_BYTES;
+void *shim_heap_base(void) { return heap; }
 typedef struct blk { uint32_t size; struct blk *next; } blk_t;   /* size in bytes, header included */
 static blk_t *free_list;
 static int heap_ready;
