@@ -189,6 +189,7 @@ static void enter_uboot(const char *why)
     usb_detach();
     fm1_delay_ms(30);
     bootguard.pending = 0;                          /* intentional reset: not a failed boot */
+    ble_clean_exit();
     fm1_enter_uboot();
 }
 

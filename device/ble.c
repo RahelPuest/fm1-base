@@ -159,6 +159,9 @@ static void ble_boot_note(void)
     blog.running = 0;
 }
 
+/* an intentional restart (an update, the chip's update mode): the next boot does not take it for a crash */
+static void ble_clean_exit(void) { blog.running = 0; }
+
 /* the radio's address and pairing: the app's store object OBJ_BLE (app.h) */
 int shim_store_load(void *dst, uint32_t max) { return plat_store_load(OBJ_BLE, dst, max); }
 int shim_store_save(const void *src, uint32_t len) { return plat_store_save(OBJ_BLE, src, len); }

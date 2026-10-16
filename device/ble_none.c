@@ -6,6 +6,7 @@
 static const uint8_t ble_quiet = 0;               /* the render never holds for the radio */
 static const uint8_t ble_last_bad = 0;
 static void ble_boot_note(void) {}
+static void ble_clean_exit(void) {}
 static void ble_start(void) {}
 static void ble_poll(void) {}
 static int ble_midi_in(uint32_t *pkt) { (void)pkt; return 0; }
