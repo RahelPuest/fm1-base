@@ -35,6 +35,7 @@ void shim_irq_restore(uint32_t f)
     }
 }
 int shim_in_irq(void) { return 0; }
+volatile uint32_t shim_isr_blocks;               /* waits refused in an interrupt (os.c; with SHIM_WIFI only) */
 /* every task waits: run what is due (a timer may be what they wait for) and keep the watchdog fed,
  * whichever context we are in (btstack_init waits in the main loop's) */
 static void ble_stuck_check(void);

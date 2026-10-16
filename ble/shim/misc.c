@@ -48,11 +48,22 @@ char *strcpy(char *d, const char *s)
 }
 
 /* a first-fit heap with a size word before each block and a free list */
+#if SHIM_WIFI
+/* WiFi: 144 KB (lwIP, wpa, the driver's buffers), in the pool as fm1-radio has it (its layout is load-bearing:
+ * moving its pools by a few KB broke reception, fm1-radio app.ld) */
+#ifndef SHIM_HEAP_KB
+#define SHIM_HEAP_KB 144u
+#endif
+#define HEAP_BYTES (SHIM_HEAP_KB * 1024u)
+static uint32_t heap[HEAP_BYTES / 4u] __attribute__((section(".pool")));
+#else
 #define HEAP_BYTES (24u * 1024u)
 /* in .bss, low in RAM, not the pool: the radio's buffers come from here, and the hardware does not reach the pool's
  * top (a CTL-1 with two links, its heap at 0x01C4F028, had stacks overwritten 0.55 s into every Bluetooth start, in
  * the radio's calibration; at 0x01C121F0 it starts cleanly) */
 static uint32_t heap[HEAP_BYTES / 4u];
+#endif
+const uint32_t shim_heap_size = HEAP_BYTES;
 typedef struct blk { uint32_t size; struct blk *next; } blk_t;   /* size in bytes, header included */
 static blk_t *free_list;
 static int heap_ready;
@@ -232,7 +243,12 @@ void __local_irq_enable(void) { local_irq_enable(); }
 void sys_local_irq_disable(void) { local_irq_disable(); }
 void sys_local_irq_enable(void) { local_irq_enable(); }
 int cpu_in_irq(void) { return shim_in_irq(); }
+#if SHIM_WIFI
+uint32_t shim_irq_depth(void);
+int cpu_irq_disabled(void) { return shim_irq_depth() > 0; }   /* the current task's own nesting */
+#else
 int cpu_irq_disabled(void) { return irq_depth > 0; }
+#endif
 void request_irq(u8 index, u8 priority, void (*handler)(void), u8 cpu_id)
 {
     (void)cpu_id;
@@ -449,15 +465,25 @@ int syscfg_write(u16 id, void *buf, u16 len)
 #define VM_WIFI_PA_MCS_DGAIN 108
 #define VM_WIFI_RF_INIT_INFO 187
 static const u8 XOSC[2] = {0xb, 0xb}, PA[7] = {1, 7, 4, 7, 11, 1, 7};
+u8 shim_xosc[2];                        /* a test override of the crystal's load caps (0 = none) */
 void wifi_get_xosc(u8 *x)
 {
-    if (syscfg_read(VM_XOSC_INDEX, x, 2) != 2)
+    if (shim_xosc[0] || shim_xosc[1])
+        memcpy(x, shim_xosc, 2);
+    else if (syscfg_read(VM_XOSC_INDEX, x, 2) != 2)
         memcpy(x, XOSC, 2);
 }
 void wifi_get_mcs_dgain(u8 *d)
 {
+#if SHIM_WIFI
+    static const u8 DGAIN[20] = {0x32, 0x32, 0x32, 0x32, 0x48, 0x48, 0x55, 0x50, 0x40, 0x40,   /* SDK cfg_tool.bin */
+                                 0x3e, 0x34, 0x48, 0x5a, 0x50, 0x40, 0x40, 0x40, 0x32, 0x2b};
+    if (syscfg_read(VM_WIFI_PA_MCS_DGAIN, d, 20) != 20)
+        memcpy(d, DGAIN, 20);
+#else
     if (syscfg_read(VM_WIFI_PA_MCS_DGAIN, d, 20) != 20)
         memset(d, 0, 20);
+#endif
 }
 int wifi_get_pa_trim_data(u8 *pa)
 {
@@ -465,8 +491,14 @@ int wifi_get_pa_trim_data(u8 *pa)
         memcpy(pa, PA, 7);
     return 1;
 }
+#ifdef SHIM_WIFI_FRESH_TRIM
+/* a fresh radio trim at every start, kept nowhere: a stored one from a bad start would stay bad */
+int wifi_get_rf_trim_data(void *info, int size) { (void)info; (void)size; return -1; }
+int wifi_set_rf_trim_data(void *info, int size) { (void)info; (void)size; return 0; }
+#else
 int wifi_get_rf_trim_data(void *info, int size) { return syscfg_read(VM_WIFI_RF_INIT_INFO, info, (u16)size) == size ? 0 : -1; }
 int wifi_set_rf_trim_data(void *info, int size) { return syscfg_write(VM_WIFI_RF_INIT_INFO, info, (u16)size) == size ? 0 : -1; }
+#endif
 
 int bt_event_notify(int from, void *event)
 {
