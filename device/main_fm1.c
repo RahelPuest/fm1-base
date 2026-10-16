@@ -106,10 +106,22 @@ static void audio_silence(void)                     /* IRQs off (flash erase): t
 
 /* ------------------------------------------------------------ timer --- */
 static uint8_t usb_due;
+static uint32_t t5_gap_max, t5_late;                /* the longest gap between ticks (us), and gaps over 300 us:
+                                                     * the key and light scan held up (the log reads and clears) */
 void fm1_timer5_irq(void)
 {
-    static uint32_t sub;
+    static uint32_t sub, t5_prev;
     fm1_timer5_ack();
+    {
+        uint32_t now = fm1_ticks(), gap = (now - t5_prev) / FM1_TICKS_PER_US;
+        if (t5_prev) {
+            if (gap > t5_gap_max)
+                t5_gap_max = gap;
+            if (gap > 300u)
+                t5_late++;
+        }
+        t5_prev = now;
+    }
     fm1b_dbg.timer_irqs++;
     if (fm1b_dbg.in_audio)
         fm1b_dbg.nested++;
@@ -232,6 +244,22 @@ static int log_frame(const uint8_t *p, uint32_t n)
         if (!plat_ble_log_line(k)[0])
             continue;                                /* (beyond what the log keeps) */
         log_line_send(plat_ble_log_line(k));
+    }
+    {
+        static const char *const L[2] = {"scan gap max us ", " late "};
+        const uint32_t v[2] = {t5_gap_max, t5_late};
+        uint32_t i;
+        q = b;
+        for (i = 0; i < 2u; i++) {
+            const char *l = L[i];
+            while (*l)
+                *q++ = *l++;
+            hexs(q, v[i]);
+            q += 8;
+        }
+        *q = 0;
+        log_line_send(b);
+        t5_gap_max = t5_late = 0;
     }
     log_line_send("end");
     return 1;
