@@ -343,7 +343,7 @@ static int remote_frame(const uint8_t *p, uint32_t n)
  *   8 the scan's networks, "<rssi> <secured> <ssid>" a line, the strongest first */
 static void wifi_line(const char *t)
 {
-    uint8_t f[48];
+    uint8_t f[96];
     uint32_t n = 0;
     f[n++] = 0xF0; f[n++] = 0x7D; f[n++] = 0x4C; f[n++] = 0x57; f[n++] = 0x10;
     while (*t && n < sizeof f - 1u)
@@ -378,7 +378,7 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
 {
     static const char *const ST[] = {"off", "starting", "on", "joining", "address", "connected", "failed"};
     static const uint8_t end[6] = {0xF0, 0x7D, 0x4C, 0x57, 0x11, 0xF7};
-    char b[44], *e = b + sizeof b - 1, *q;
+    char b[88], *e = b + sizeof b - 1, *q;            /* (a long name: "Charles Vestal's iPhone" ...) */
     int i;
     if (n < 4u || p[0] != 0x7Du || p[1] != 0x4Cu || p[2] != 0x57u)
         return 0;
