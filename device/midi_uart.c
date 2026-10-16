@@ -4,8 +4,8 @@
 /* MIDI IN on the TRS jack (ported from Felucca 1.0's midi_uart.c): PH8 -> input channel 1 -> UART1
  * RX, 31250 baud, RX DMA into a 128-byte ring, polled from the TIMER5 ISR outside the render, the
  * same context as usb_poll. Channel messages and Clock / Start / Continue / Stop go into midi_in_q
- * beside USB's, as USB-MIDI packets (cable 0, CIN = status >> 4), so the engine cannot tell them
- * apart; other system messages and SysEx are ignored (no SysEx -> UBOOT from the jack). */
+ * beside USB's, as USB-MIDI packets (CIN = status >> 4) on cable 1, which tells them apart from USB's
+ * (plat_midi_in's port); other system messages and SysEx are ignored (no SysEx -> UBOOT from the jack). */
 #include "fm1_uart.h"           /* registers (felucca-bsp chip/; the host test adds it to its include path) */
 
 #define UM_RING 128u
@@ -20,7 +20,7 @@ static int um_put(uint32_t pkt)                    /* into midi_in_q (usb.c): 0 
 {
     if (mi_w - mi_r >= MQ)
         return 0;
-    midi_in_q[mi_w % MQ] = pkt;
+    midi_in_q[mi_w % MQ] = pkt | 0x10u;           /* cable 1: from the jack */
     RING_PUBLISH();
     mi_w++;
     return 1;
