@@ -448,7 +448,7 @@ void ble_midi_disconnect(void)
     }
 }
 /* main loop: a connection the device has not answered within 5 s is given up (a device that stopped advertising,
- * or left): the state goes back to off, the app says so */
+ * or left), and so is a search not done 5 s after the link came up: the state goes back to off, the app says so */
 void ble_midi_poll(void)
 {
     if (mc_state == BLE_MC_CONNECTING && !mc_handle && shim_ms() - mc_t0 > 5000u) {
@@ -456,6 +456,10 @@ void ble_midi_poll(void)
         ble_op_create_connection_cancel();
         mc_state = BLE_MC_OFF;
         bt_ble_adv_enable(1);
+    } else if (mc_state == BLE_MC_SEARCHING && mc_handle && shim_ms() - mc_t0 > 5000u) {
+        printf("central: search timed out\n");
+        mc_t0 = shim_ms();                       /* (once: the disconnection then turns the state off) */
+        ble_op_disconnect(mc_handle);
     }
 }
 int ble_midi_central_state(void) { return mc_state; }
@@ -469,6 +473,7 @@ void user_client_report_search_result(search_result_t *r)
             SEND(mc_handle, mc_value + 1, (u8 *)&on, 2, ATT_OP_WRITE);
             mc_state = BLE_MC_READY;
             printf("central: MIDI ready\n");
+            bt_ble_adv_enable(1);                /* set up: the computer may find us again */
         } else {
             printf("central: no MIDI characteristic\n");
             ble_op_disconnect(mc_handle);
@@ -507,8 +512,10 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
                 bt_ble_adv_enable(1);
                 break;
             }
-            bt_ble_adv_enable(1);                /* the link is up: the computer may find us again */
+            /* advertising stays paused until the search is done: a computer that connected meanwhile (a Mac that
+             * remembered the FM-1) stalled it, and the device never got as far as MIDI */
             mc_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+            mc_t0 = shim_ms();
             mc_value = 0;
             printf("central: connected %x\n", mc_handle);
             ble_op_multi_att_send_conn_handle(mc_handle, 0, ROLE_CLIENT);
@@ -682,7 +689,10 @@ static void cbk_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
 #endif
         set_ble_work_state(BLE_ST_DISCONN);
         os_mutex_pend(&mutex, 0);
-        bt_ble_adv_enable(1);
+#if BLE_MIDI_CENTRAL
+        if (mc_state != BLE_MC_CONNECTING && mc_state != BLE_MC_SEARCHING)   /* (the central resumes it when done) */
+#endif
+            bt_ble_adv_enable(1);
         os_mutex_post(&mutex);
         connection_update_cnt = 0;
         break;
