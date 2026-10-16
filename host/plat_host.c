@@ -69,12 +69,12 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
             if (x + i < 240u && y + j < 240u)
                 fb[(y + j) * 240u + x + i] = px[j * w + i];
 }
+#include "plat.h"
+#include "app.h"                       /* before gfx.c: the app may size the canvas (APP_CANVAS_PX), as on the device */
 #include "gfx.c"
 
 
 /* ---------------------------------------------------------- platform --- */
-#include "plat.h"
-#include "app.h"
 #ifdef APP_TOUCH
 #include "touch.h"                     /* velocity and pressure from the keys (lib/touch.c) */
 #endif
@@ -256,6 +256,81 @@ void plat_ble_enable(int on)
         plat_ble_start();
     }
 }
+#if FM1B_WIFI
+/* WiFi (FM1B_WIFI): a stand-in, two networks around ("Home", kept, and "Cafe", open), on 0.5 s after asked, joined
+ * 1.5 s after (an address 0.5 s later); the network code (fm1.toml net) is the device's alone: plat_net_task runs
+ * nothing here */
+static uint8_t wf_st;
+static uint32_t wf_t;
+static char wf_ssid[33], wf_kept[6][33] = {"Home"};
+static void wifi_tick(void)
+{
+    if (wf_st == WIFI_STARTING && now_ms - wf_t >= 500u) {
+        wf_st = wf_kept[0][0] ? WIFI_JOINING : WIFI_ON;
+        snprintf(wf_ssid, sizeof wf_ssid, "%s", wf_kept[0]);
+        wf_t = now_ms;
+    }
+    if (wf_st == WIFI_JOINING && now_ms - wf_t >= 1000u) {
+        wf_st = WIFI_ADDRESS;
+        wf_t = now_ms;
+    }
+    if (wf_st == WIFI_ADDRESS && now_ms - wf_t >= 500u)
+        wf_st = WIFI_CONNECTED;
+}
+void plat_wifi_on(int on)
+{
+    if (on && wf_st == WIFI_OFF) {
+        wf_st = WIFI_STARTING;
+        wf_t = now_ms;
+        wf_ssid[0] = 0;
+    } else if (!on) {
+        wf_st = WIFI_OFF;
+    }
+}
+int plat_wifi_state(void) { return wf_st; }
+const char *plat_wifi_why(void) { return ""; }
+const char *plat_wifi_ssid(void) { return wf_ssid; }
+uint32_t plat_wifi_ip(void) { return wf_st == WIFI_CONNECTED ? 0x2A01A8C0u : 0; }   /* 192.168.1.42 */
+int plat_wifi_rssi(void) { return wf_st == WIFI_CONNECTED ? -48 : 0; }
+int plat_wifi_scan(void) { return wf_st >= WIFI_ON && wf_st != WIFI_FAILED ? 0 : -1; }
+int plat_wifi_found(int i, char *ssid, int *rssi, int *secured)
+{
+    static const char *const N[2] = {"Home", "Cafe"};
+    if (wf_st < WIFI_ON || i < 0 || i > 1)
+        return 0;
+    if (ssid)
+        snprintf(ssid, 33, "%s", N[i]);
+    if (rssi)
+        *rssi = i ? -71 : -48;
+    if (secured)
+        *secured = !i;
+    return 1;
+}
+int plat_wifi_join(const char *ssid, const char *pass)
+{
+    (void)pass;
+    if (wf_st < WIFI_ON || !ssid || !ssid[0])
+        return -1;
+    snprintf(wf_ssid, sizeof wf_ssid, "%s", ssid);
+    wf_st = WIFI_JOINING;
+    wf_t = now_ms;
+    return 0;
+}
+int plat_wifi_saved(int i, char *ssid)
+{
+    if (i < 0 || i > 5 || !wf_kept[i][0])
+        return 0;
+    if (ssid)
+        snprintf(ssid, 33, "%s", wf_kept[i]);
+    return 1;
+}
+void plat_wifi_forget(int i)
+{
+    if (i >= 0 && i < 6)
+        memmove(wf_kept[i], wf_kept[i + 1], (size_t)(5 - i) * sizeof wf_kept[0]), memset(wf_kept[5], 0, 33);
+}
+int plat_net_task(void (*fn)(void *), void *arg, const char *name) { (void)fn, (void)arg, (void)name; return -1; }
+#endif
 uint32_t plat_ble_log_total(void) { return ble_log_n; }
 const char *plat_ble_log_line(int back)
 {
@@ -504,6 +579,9 @@ static void run_ms(uint32_t ms)
     for (i = 0; i < ms; i++) {
         now_ms++;
         ble_tick();
+#if FM1B_WIFI
+        wifi_tick();
+#endif
 #if defined APP_KEY_SENSE
         if (sense_on)
             app_host_tick();                        /* the keys' readings, as the scan hands them over */
