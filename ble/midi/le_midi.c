@@ -335,11 +335,13 @@ static volatile u8 mc_n;
 static u8 search_ram_buffer[512] __attribute__((aligned(4)));
 static struct create_conn_param_t mc_conn;
 static u8 mc_tries;                              /* connection attempts left (0x3E: the device never answered) */
+static u32 mc_t0;                                /* when the connection was asked for (it has no timeout of its own) */
 static void bt_ble_adv_enable(u8 enable);
 static void mc_create(void)                      /* advertising paused meanwhile: its slots can crowd out the link's first */
 {
     bt_ble_adv_enable(0);
     mc_state = BLE_MC_CONNECTING;
+    mc_t0 = shim_ms();
     ble_op_create_connection(&mc_conn);
 }
 static const u8 midi_svc_le[16] = {MIDI_SVC_UUID}, midi_chr_le[16] = {MIDI_CHR_UUID};
@@ -400,7 +402,8 @@ void ble_midi_scan(int on)                       /* main loop: start (the list s
 {
     if (on && mc_state == BLE_MC_OFF) {
         mc_n = 0;
-        ble_op_set_scan_param(SCAN_ACTIVE, 48, 24);              /* 30 ms interval, 15 ms window (0.625 ms) */
+        ble_op_set_scan_param(SCAN_ACTIVE, 48, 8);               /* 30 ms interval, 5 ms window (0.625 ms): the
+                                                                  * radio free for a computer's link meanwhile */
         ble_op_scan_enable2(1, 0);
         mc_state = BLE_MC_SCANNING;
     } else if (!on && mc_state == BLE_MC_SCANNING) {
@@ -442,6 +445,17 @@ void ble_midi_disconnect(void)
     else if (mc_state == BLE_MC_CONNECTING) {
         ble_op_create_connection_cancel();
         mc_state = BLE_MC_OFF;
+    }
+}
+/* main loop: a connection the device has not answered within 5 s is given up (a device that stopped advertising,
+ * or left): the state goes back to off, the app says so */
+void ble_midi_poll(void)
+{
+    if (mc_state == BLE_MC_CONNECTING && !mc_handle && shim_ms() - mc_t0 > 5000u) {
+        printf("central: no answer\n");
+        ble_op_create_connection_cancel();
+        mc_state = BLE_MC_OFF;
+        bt_ble_adv_enable(1);
     }
 }
 int ble_midi_central_state(void) { return mc_state; }

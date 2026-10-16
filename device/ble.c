@@ -399,6 +399,12 @@ static void ble_poll(void)
         bc_r = bc_w;
     }
     ble_midi_drain();
+#if FM1B_BLE_CENTRAL
+    {
+        extern void ble_midi_poll(void);
+        ble_midi_poll();                          /* a connection that never answers, given up */
+    }
+#endif
     ble_stuck_check();
     if (ble_state == BLE_READY)
         ble_irqs_back("irqs back: BT ready");
