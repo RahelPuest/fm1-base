@@ -252,7 +252,7 @@ static int log_frame(const uint8_t *p, uint32_t n)
     }
     {
         extern uint32_t lock_max, lock_from;
-        static const char *const L[5] = {"scan gap ", " late ", " tick ", "lock ", " from "};
+        static const char *const L[5] = {"gap ", " late ", " tick ", "lock ", " from "};
         const uint32_t v[5] = {t5_gap_max, t5_late, t5_run_max, lock_max, lock_from};
         uint32_t i;
         q = b;
