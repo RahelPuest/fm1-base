@@ -491,8 +491,10 @@ int wifi_get_pa_trim_data(u8 *pa)
         memcpy(pa, PA, 7);
     return 1;
 }
-#ifdef SHIM_WIFI_FRESH_TRIM
-/* a fresh radio trim at every start, kept nowhere: a stored one from a bad start would stay bad */
+#if SHIM_WIFI && !defined SHIM_WIFI_KEEP_TRIM
+/* WiFi: a fresh radio trim at every start, kept nowhere. A stored one is shared with Bluetooth's (the same record, in
+ * the same store object across firmwares): WiFi on a trim a Bluetooth start had kept could not be heard by the
+ * access point (no join even to a hotspot beside it), and joined at once on a fresh one (2026-10-16) */
 int wifi_get_rf_trim_data(void *info, int size) { (void)info; (void)size; return -1; }
 int wifi_set_rf_trim_data(void *info, int size) { (void)info; (void)size; return 0; }
 #else
