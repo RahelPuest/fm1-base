@@ -25,4 +25,3 @@ Felucca contributors is in fm1-base: the history of every file was checked when 
 | Terminus (Dimitar Toshkov Zhekov) | SIL OFL 1.1 | `assets/fonts/ter-u*.bdf`, `assets/fonts/Terminus-LICENSE.txt` |
 | JieLi AC79 SDK files a package needs (`uboot.boot`, `cfg_tool.bin`, `eq_cfg_hw.bin`) | Apache-2.0 | read from your SDK checkout at build time; never in this repository |
 | The browser emulator's voice: eSpeak NG, through fm1-reader | GPL-3.0-or-later | taken from an fm1-reader checkout when the emulator is built; a separate program the page loads |
-| JieLi's flash loader blob used by `tools/fm1_rescue.py` | jl-uboot-tool's | downloaded and checked by hash when the rescue runs; never in this repository |
