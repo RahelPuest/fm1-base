@@ -6,7 +6,7 @@
 #include "btdev.h"
 
 static struct {
-    uint8_t pick, up, was_dev, was_comp, q_r, q_w;
+    uint8_t pick, up, was_dev, was_comp, q_r, q_w, letting_go;   /* letting_go: SAVE did it, not lost */
     uint8_t q[8];
     char name[21];                       /* the device asked to connect: kept, the scan's list empties */
 } bd;
@@ -47,8 +47,10 @@ void btdev_page(int up)
             bd_put(BTDEV_CONNECTED);
         else if (d == BLE_DEV_OFF && (bd.was_dev == BLE_DEV_CONNECTING || bd.was_dev == BLE_DEV_SEARCHING))
             bd_put(BTDEV_NO_ANSWER);
-        else if (d == BLE_DEV_OFF && bd.was_dev == BLE_DEV_READY)
+        else if (d == BLE_DEV_OFF && bd.was_dev == BLE_DEV_READY && !bd.letting_go)
             bd_put(BTDEV_LOST);
+        if (d == BLE_DEV_OFF)
+            bd.letting_go = 0;
         bd.was_dev = (uint8_t)d;
     }
     if (c != bd.was_comp) {
@@ -78,6 +80,7 @@ const char *btdev_word(int ev)
 int btdev_save(void)
 {
     if (btdev_busy()) {
+        bd.letting_go = 1;
         plat_ble_disconnect();
         return BTDEV_LET_GO;
     }
