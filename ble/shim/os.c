@@ -53,26 +53,45 @@ static task_t tasks[NTASK];
  * be pointed into): slots the library never uses cost nothing, and their room is the heap's (fm1-radio's HTTPS
  * stream ran it out with 13 stacks fixed in the pool) */
 static uint32_t *stk[NTASK - 1];
+static uint16_t stk_words[NTASK - 1];             /* each slot's stack, in words */
 #define STACK(i) stk[(i) - 1]
+#define STACK_N(i) stk_words[(i) - 1]
 extern void *shim_heap_base(void);
 uint32_t shim_stacks_lo(void) { return (uint32_t)(uintptr_t)shim_heap_base(); }
-static int stack_get(int i)
+/* a task's stack by its name: the WiFi library's measured deepest (fm1-radio, with the audio render nesting on
+ * them): tasklet and RtmpMlmeTask 3.3 KB, tcpip_thread 1.3 KB, RtmpCmdQTask and wl_rx_irq_thread hardly any;
+ * the rest (the app's, TLS's 6 KB handshake among them) 8 KB */
+static uint32_t stack_words_for(const char *name)
 {
-    if (!STACK(i)) {
-        uint8_t *p = malloc(STACK_WORDS * 4u + 8u);
+    static const struct { const char *name; uint16_t words; } S[] = {
+        {"tasklet", 1536}, {"RtmpMlmeTask", 1536}, {"tcpip_thread", 1024}, {"RtmpCmdQTask", 1024},
+        {"wl_rx_irq_thread", 1024}, {"sys_timer", 1024}};
+    unsigned k;
+    for (k = 0; name && k < sizeof S / sizeof S[0]; k++)
+        if (!strcmp(name, S[k].name))
+            return S[k].words;
+    return STACK_WORDS;
+}
+static int stack_get(int i, const char *name)
+{
+    uint32_t words = stack_words_for(name);
+    if (!STACK(i) || STACK_N(i) < words) {        /* (a smaller one is kept: it may still be pointed into) */
+        uint8_t *p = malloc(words * 4u + 8u);
         if (!p) {
             shim_log("task: no memory for a stack");
             return -1;
         }
         STACK(i) = (uint32_t *)(((uintptr_t)p + 7u) & ~(uintptr_t)7u);   /* 8-aligned */
+        STACK_N(i) = (uint16_t)words;
     }
     return 0;
 }
 #else
 static uint32_t stacks[NTASK - 1][STACK_WORDS] __attribute__((aligned(8), section(".pool")));
 #define STACK(i) stacks[(i) - 1]
+#define STACK_N(i) STACK_WORDS
 uint32_t shim_stacks_lo(void) { return (uint32_t)(uintptr_t)&stacks[0][0]; }
-static int stack_get(int i) { (void)i; return 0; }
+static int stack_get(int i, const char *name) { (void)i, (void)name; return 0; }
 #endif
 task_t *shim_cur = &tasks[0];
 uint32_t shim_task_now __attribute__((section(".noinit")));   /* the task running (a watchdog reset's breadcrumb) */
@@ -291,9 +310,9 @@ static int free_slot(void)
 int task_create(void (*fn)(void *), void *p, const char *name)
 {
     int i = free_slot(), k;
-    if (i && stack_get(i) == 0) {
+    if (i && stack_get(i, name) == 0) {
             task_t *t = &tasks[i];
-            uint32_t *top = &STACK(i)[STACK_WORDS];
+            uint32_t *top = &STACK(i)[STACK_N(i)];
             killed_at[i] = 0;
             memset(t, 0, sizeof *t);
             for (k = 0; name && name[k] && k < (int)sizeof t->name - 1; k++)
@@ -301,7 +320,7 @@ int task_create(void (*fn)(void *), void *p, const char *name)
             t->name[k] = 0;
             t->fn = fn;
             t->arg = p;
-            for (k = 0; k < STACK_WORDS - 13; k++)
+            for (k = 0; k < (int)STACK_N(i) - 13; k++)
                 STACK(i)[k] = 0x5354414Bu;               /* "STAK": how deep it went (shim_os_dump) */
             for (k = 1; k <= 13; k++)
                 top[-k] = (uint32_t)(uintptr_t)shim_task_entry;
@@ -352,9 +371,9 @@ int shim_stack_depth(int i)
     int u = 0;
     if (i < 1 || i >= NTASK || !tasks[i].used || !STACK(i))
         return 0;
-    while (u < STACK_WORDS && STACK(i)[u] == 0x5354414Bu)
+    while (u < (int)STACK_N(i) && STACK(i)[u] == 0x5354414Bu)
         u++;
-    return (STACK_WORDS - u) * 4 / 256;
+    return ((int)STACK_N(i) - u) * 4 / 256;
 }
 
 /* for the screen: each task and what it waits for */
@@ -378,9 +397,9 @@ void shim_os_dump(void)
             b[n++] = (char)('0' + (q_used(&tasks[i]) > 9 ? 9 : q_used(&tasks[i])));
             if (i) {                                    /* stack used, of 8 KiB, in 256-byte steps */
                 int u = 0;
-                while (STACK(i) && u < STACK_WORDS && STACK(i)[u] == 0x5354414Bu)
+                while (STACK(i) && u < (int)STACK_N(i) && STACK(i)[u] == 0x5354414Bu)
                     u++;
-                u = (STACK_WORDS - u) * 4 / 256;
+                u = ((int)STACK_N(i) - u) * 4 / 256;
                 b[n++] = ' ';
                 b[n++] = 's';
                 b[n++] = (char)('0' + u / 10 % 10);
