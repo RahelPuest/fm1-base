@@ -21,8 +21,6 @@ struct fm1b_dbg {
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
-#define WDT_CARRY 0x57445452u                       /* "WDTR": a watchdog reset, carried across the chip reset after it */
-static uint32_t wdt_carry __attribute__((section(".noinit")));
 static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
                                                                   * 6 input (fm1b_dbg.stage) */
@@ -540,18 +538,8 @@ void fm1_cstart(void)
     fm1_time_init();
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;
-    /* after a watchdog reset the radio's hardware may still be writing into the buffers the last run gave it: a
-     * CTL-1 crashed so, a return address on a stack overwritten 0.6 s into the next Bluetooth start, twice. A full
-     * chip reset (P33, as fm1_reboot) first, the watchdog remembered across it */
-    if ((p3 & 4u) && wdt_carry != WDT_CARRY) {
-        wdt_carry = WDT_CARRY;
-        wdt_stage = fm1b_dbg.stage;
-        fm1_reboot();
-    }
-    if (wdt_carry == WDT_CARRY) {
-        wdt_carry = 0;
-        p3 |= 4u;                                   /* (what ended the last run, for the boot guard and the log) */
-    }
+    if (p3 & 4u)
+        wdt_stage = fm1b_dbg.stage;                 /* a watchdog reset: where the loop was (the log readout) */
     src = fm1_boot.rst_src;
     wdt = fm1_boot.wdt_con;
     fm1_wdt_arm(0x0D);
