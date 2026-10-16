@@ -582,16 +582,44 @@ def mmio_check():
     return errors
 
 
+def o2_files():
+    """the o2 units, their globs expanded"""
+    return [f for u in CONF.get("o2", []) for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u])]
+
+
+def o2_objects(cc, base_flags, out):
+    """the o2 units compiled apart (each with its own flags: o2_cflags, o2_include, its directory) for the host or the
+    browser; their objects"""
+    extra = [*CONF.get("o2_cflags", []), *[a for h in CONF.get("o2_include", []) for a in ("-include", str(APP / h))]]
+    out.mkdir(parents=True, exist_ok=True)
+    jobs = [(f, out / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")) for f in o2_files()]
+
+    def one(job):
+        f, o = job
+        r = subprocess.run([cc, *base_flags, *extra, f"-I{f.parent}", "-c", str(f), "-o", str(o)],
+                           capture_output=True, text=True)
+        return r.stderr if r.returncode else ""
+    with ThreadPoolExecutor(8) as ex:
+        errs = [e for e in ex.map(one, jobs) if e]
+    if errs:
+        sys.stderr.write(errs[0])
+        raise SystemExit("build: an o2 unit failed")
+    return [str(o) for _, o in jobs]
+
+
 def build_host():
     """the app against a simulated FM-1 (host/plat_host.c), with this machine's compiler; -ffp-contract=off like the
     device (no fused multiply-add), so the samples match"""
     out = OUT / "host"
     out.mkdir(parents=True, exist_ok=True)
     exe = out / (STEM + "_host")                  # NAME_host; NAME-usb_host with --no-ble
+    inc_dirs = [f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
+    o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *inc_dirs],
+                         out / "o2")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
-           "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
+           "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
     if r.returncode:
@@ -606,11 +634,14 @@ def build_web():
     import shutil
     emu = OUT / "emu"
     emu.mkdir(parents=True, exist_ok=True)
+    web_inc = [f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))]
+    o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *web_inc],
+                         emu / "o2")
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
            "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
-           "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
+           "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
     if r.returncode:
