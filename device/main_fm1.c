@@ -578,8 +578,10 @@ static void fm1_main(void)
                                                      * CTL-1 0.6 s into most Bluetooth starts */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
         irq_restore(f);
-        if (flash_ok)
+        if (flash_ok) {
             ota_boot_cleanup();
+            fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
+        }
     }
     lcd_init();
     palette_set(APP_PALETTE);

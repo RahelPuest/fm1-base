@@ -28,6 +28,7 @@
  *   expect_out PORT B0 B1 B2     check that this message went out to PORT since the last "out"
  *   expect WHAT VALUE            check state: exit 1 on mismatch; VALUE "<N" / ">N" is a bound
  *   reboot                       re-run boot from the simulated flash (persistence test)
+ *   data FILE OFFSET             a file into the simulated data area (plat_data) at OFFSET (0x97000..)
  *   listen                       a screen reader starts listening (HELLO, again every 2 s): each SAY is printed
  *                                ("said: ..."; "said!:" cuts off what was being said)
  *   where                        the reader asks for everything on the screen
@@ -354,6 +355,39 @@ const char *plat_ble_log_line(int back)
 }
 void plat_midi_out(uint32_t pkt) { plat_midi_send(pkt, TO_USB); }
 void plat_log(const char *line) { ble_say(line); }
+/* the data area (plat.h): a simulated flash, erased at the start, kept across a simulated reboot */
+static uint8_t data_area[PLAT_DATA_HI - PLAT_DATA_LO];
+static uint8_t data_ready;
+static void data_init(void)
+{
+    if (!data_ready) {
+        memset(data_area, 0xFF, sizeof data_area);
+        data_ready = 1;
+    }
+}
+const uint8_t *plat_data(uint32_t off)
+{
+    data_init();
+    return off >= PLAT_DATA_LO && off < PLAT_DATA_HI ? &data_area[off - PLAT_DATA_LO] : 0;
+}
+int plat_data_erase(uint32_t off)
+{
+    data_init();
+    if ((off & 0xFFFu) || off < PLAT_DATA_LO || off + 0x1000u > PLAT_DATA_HI)
+        return -1;
+    memset(&data_area[off - PLAT_DATA_LO], 0xFF, 0x1000u);
+    return 0;
+}
+int plat_data_write(uint32_t off, const void *src, uint32_t n)
+{
+    uint32_t i;
+    data_init();
+    if (off < PLAT_DATA_LO || n > PLAT_DATA_HI - off)
+        return -1;
+    for (i = 0; i < n; i++)                       /* as flash: bits only go from 1 to 0 */
+        data_area[off - PLAT_DATA_LO + i] &= ((const uint8_t *)src)[i];
+    return 0;
+}
 void plat_sysex_send(const uint8_t *frame, uint32_t n) { (void)frame, (void)n; }
 
 /* flash: one buffer per object, kept across a simulated reboot */
@@ -900,7 +934,20 @@ int main(int argc, char **argv)
             printf("\n");
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);
-        else if (!strcmp(cmd, "reboot")) {
+        else if (!strcmp(cmd, "data")) {          /* data FILE OFFSET: a file into the data area (plat_data) */
+            FILE *df = fopen(a, "rb");
+            uint32_t off = (uint32_t)strtoul(b, 0, 0);
+            data_init();
+            if (!df || off < PLAT_DATA_LO || off >= PLAT_DATA_HI) {
+                printf("FAIL data %s %s: no such file, or outside the data area\n", a, b);
+                fails++;
+            } else {
+                size_t n = fread(&data_area[off - PLAT_DATA_LO], 1, PLAT_DATA_HI - off, df);
+                printf("  ok   data: %u B at %#x\n", (unsigned)n, (unsigned)off);
+            }
+            if (df)
+                fclose(df);
+        } else if (!strcmp(cmd, "reboot")) {
 #ifdef APP_HOST_REBOOT
             app_host_reboot();                  /* the app forgets what RAM would (app.h) */
 #endif

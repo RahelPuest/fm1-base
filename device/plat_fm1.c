@@ -125,6 +125,20 @@ void plat_unlock(uint32_t f)
     }
 }
 void plat_sysex_send(const uint8_t *frame, uint32_t n) { ota_wire_send(frame, n); }
+
+/* the data area (plat.h): read through the unencrypted XIP window (main_fm1.c fl_plain_window_init) */
+const uint8_t *plat_data(uint32_t off)
+{
+    return flash_ok && FL_IN(off, 1u, PLAT_DATA_LO, PLAT_DATA_HI) ? (const uint8_t *)FL_XIP(off) : 0;
+}
+int plat_data_erase(uint32_t off)
+{
+    return flash_ok && !(off & 0xFFFu) && FL_IN(off, 0x1000u, PLAT_DATA_LO, PLAT_DATA_HI) ? st_erase(off) : -1;
+}
+int plat_data_write(uint32_t off, const void *src, uint32_t n)
+{
+    return flash_ok && FL_IN(off, n, PLAT_DATA_LO, PLAT_DATA_HI) ? st_prog(off, src, n) : -1;
+}
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
