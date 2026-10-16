@@ -5,6 +5,7 @@ usb_manufacturer = "fm1-base"
 usb_product = "TEMPLATE FM-1"
 o2 = []                        # separate units compiled at -O2 (an app's DSP)
 words = "words.tsv"
+ble = true                     # Bluetooth MIDI (--no-ble builds without it)
 # the site (tools/make_site.py, tools/publish_site.sh)
 tagline = "a starting point for FM-1 firmware"
 repo = "https://github.com/charlesvestal/fm1-base"

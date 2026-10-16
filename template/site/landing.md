@@ -1,10 +1,11 @@
 # TEMPLATE
 
 TEMPLATE is the smallest complete firmware for the M-VAVE FM-1, made to be copied: every control on the screen by
-its name, a simple voice on the keys, settings that save, MIDI over USB and TRS, and a screen reader. Copy it to
+its name, a simple voice on the keys with velocity and pressure, settings that save, MIDI over USB, Bluetooth and
+TRS, and a screen reader. Copy it to
 start your own firmware on fm1-base.
 
-![TEMPLATE while a key is held: C4 in the header, FX lit among the buttons, K3 at 3, the key lit](manual/img/screen-playing.png "TEMPLATE on the FM-1's screen")
+![TEMPLATE while a key is held: C4 in the header with V 90 P 64, FX lit among the buttons, K3 at 3, the key filled](manual/img/screen-playing.png "TEMPLATE on the FM-1's screen")
 
 Version {{VERSION}}. Installing is at your own risk; the installer can put M-VAVE's own firmware back.
 

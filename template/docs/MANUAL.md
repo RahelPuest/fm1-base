@@ -1,8 +1,8 @@
 # TEMPLATE
 
 TEMPLATE is the smallest complete firmware for the M-VAVE FM-1, made to be copied. Every control shows on the
-screen by its name as you use it, the keys play a simple voice, and a few controls do something: the octave, the
-wave, the volume and saving. It installs, updates, runs in the browser and speaks to a screen reader, as a finished
+screen by its name as you use it, the keys play a simple voice with velocity and pressure, and a few controls do
+something: the octave, the wave, the volume and saving. MIDI goes out over USB and Bluetooth. It installs, updates, runs in the browser and speaks to a screen reader, as a finished
 firmware does.
 
 This manual is also an example: copy it with the template and write your firmware's own.
@@ -40,14 +40,14 @@ doesn't start can be recovered too. For details, see felucca-bsp's `tools/fm1_re
 
 ## 2. The screen
 
-![TEMPLATE while a key is held: C4 in the header, FX lit among the buttons, K3 at 3, the key lit on the keyboard](img/screen-playing.png "A key held, FX pressed, K3 turned")
+![TEMPLATE while a key is held: C4 in the header with V 90 P 64, FX lit among the buttons, K3 at 3, the key filled on the keyboard](img/screen-playing.png "A key held, FX pressed, K3 turned")
 
 | Part | What it shows |
 | --- | --- |
-| Header | The name, and the note while a key plays. A message for a moment after a change. |
+| Header | The name, and BLE: lit while a computer or tablet is connected over Bluetooth. While a key plays, its note, the velocity it landed at (V) and how hard it's pressed (P). A message for a moment after a change. |
 | Buttons | All 14, by their names. A button lights while it's held. |
 | Knobs | The seven encoders, each with a count of its turns. A knob lights for a moment as it turns. |
-| Keys | The 27 keys, black above white. A key lights while it's held. |
+| Keys | The 27 keys, black above white. A held key fills to its velocity, and white over that shows its pressure. |
 | Bottom line | The octave, the wave (on PRESET) and the volume (MASTER). |
 
 ---
@@ -56,7 +56,7 @@ doesn't start can be recovered too. For details, see felucca-bsp's `tools/fm1_re
 
 | Control | What it does |
 | --- | --- |
-| Keys | Play the voice, and send the note over USB-MIDI on channel 1. The last key pressed sounds. |
+| Keys | Play the voice, louder the harder they land, and send the note over USB and Bluetooth on channel 1, with its velocity. Pressing a held key harder sends aftertouch. The last key pressed sounds. |
 | OCT− · OCT+ | The octave, from −2 to +2. |
 | PRESET | The wave: sine or triangle. |
 | MASTER | The volume. |
@@ -76,8 +76,15 @@ there are changes to save.
 
 ## 5. MIDI
 
-MIDI comes in over USB and the TRS jack. A note on any channel plays the voice; a note off releases it. The keys
-send notes out over USB.
+MIDI comes in over USB, Bluetooth and the TRS jack. A note on any channel plays the voice; a note off releases it.
+The keys send notes, with their velocity, and poly aftertouch out over USB and Bluetooth.
+
+Over Bluetooth, TEMPLATE advertises as "FM-1". On a Mac, open Audio MIDI Setup, choose Window > Show MIDI Studio,
+click the Bluetooth button, then Connect next to FM-1. On an iPad or iPhone, connect from a music app's Bluetooth
+MIDI settings.
+
+The keys sense how hard they're played, with no change to the FM-1. The 20 lowest keys
+(F3 to C5) give velocity and pressure; the top seven give velocity only.
 
 ---
 

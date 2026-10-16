@@ -2,8 +2,8 @@
  * Copyright (C) 2026 Charles Vestal */
 /* The template app: every control on the screen as it arrives, by the name the app knows it by (plat.h B_*, EN_*,
  * the keys), and a few of them doing something: the keys play a voice and go out over USB-MIDI (MIDI in plays it
- * too), OCT- / OCT+ set the octave, PRESET the wave, MASTER the volume, SAVE stores the settings. One of each thing
- * the platform offers, kept short. Part of the unity build (device/unity.c, host/plat_host.c), after the platform:
+ * too), OCT- / OCT+ set the octave, PRESET the wave, MASTER the volume, SAVE stores the settings; the keys are
+ * played with velocity and pressure (lib/touch.h), shown on them. One of each thing the platform offers, kept short. Part of the unity build (device/unity.c, host/plat_host.c), after the platform:
  * gfx.c and announce.c are in scope. */
 #include "fastmath.h"
 
@@ -26,9 +26,14 @@ static const char *const ENC_NAME[NE] = {"SELECT", "ALGO", "PRESET", "K1", "K2",
 /* ------------------------------------------------------------------ voice --- */
 /* one voice, the last note wins; the main loop and MIDI in set it, the audio interrupt plays it */
 static volatile int32_t voice_note = -1;     /* MIDI note, -1 = released */
+static volatile float voice_vel = 1.0f;      /* the note's velocity, 0..1 */
 static float voice_phase, voice_level, gain_now;   /* gain_now glides to MASTER: no step at a block's edge */
 
-static void note_on(int32_t note) { voice_note = note; }
+static void note_on(int32_t note, uint32_t vel)
+{
+    voice_vel = (float)vel / 127.0f;
+    voice_note = note;
+}
 static void note_off(int32_t note)
 {
     if (voice_note == note)
@@ -41,7 +46,7 @@ static void midi_in(void)                    /* audio interrupt: the packets tha
     while (plat_midi_in(&pkt, 0)) {
         uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = pkt >> 24;
         if ((st & 0xF0u) == 0x90u && d2)
-            note_on((int32_t)d1);
+            note_on((int32_t)d1, d2);
         else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u)
             note_off((int32_t)d1);
     }
@@ -51,7 +56,7 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 {
     uint32_t i;
     int32_t note = voice_note;
-    float target = note >= 0 ? 0.25f : 0.0f;
+    float target = note >= 0 ? 0.25f * voice_vel : 0.0f;
     float inc = note >= 0 ? 440.0f * fm_exp2f((float)(note - 69) / 12.0f) / 44100.0f : 0.0f;
     float gain = (float)master_q12 / 4096.0f * 8300000.0f;   /* MASTER, read once a block */
     midi_in();
@@ -95,6 +100,8 @@ static struct {
     char msg[2][24];                     /* a short message over the header */
     uint32_t msg_until;
     uint32_t keys, btn;                  /* held at the last input */
+    uint8_t vel[NKEYS], prs[NKEYS];      /* each key's last velocity, and its pressure while held */
+    int32_t last_key;                    /* the key pressed last: its numbers in the header */
     int32_t turns[NE];                   /* detents since boot, per encoder */
     uint32_t turned_at[NE];              /* when each was last turned: it shows lit for a moment */
     uint8_t redraw;
@@ -195,17 +202,28 @@ static void octave_step(int32_t d)
 
 static void input(void)
 {
-    uint32_t keys = plat_keys(), btn = plat_buttons(), k;
+    uint32_t keys, btn = plat_buttons(), k;
     int32_t e;
+    touch_poll();                            /* the sensed keys' presses, velocities and pressure */
+    keys = touch_keys();
     for (k = 0; k < NKEYS; k++) {            /* key 0 is F3 (MIDI 53) */
-        uint32_t bit = 1u << k;
+        uint32_t bit = 1u << k, v;
         int32_t note = 53 + (int32_t)k + 12 * set.octave;
         if ((keys & bit) && !(ui.keys & bit)) {
-            note_on(note);
-            plat_midi_send(0x09u | 0x90u << 8 | (uint32_t)note << 16 | 100u << 24, TO_USB | TO_BLE);   /* BLE: if built with it */
+            v = touch_vel(k);
+            ui.vel[k] = (uint8_t)v;
+            ui.prs[k] = 0;
+            ui.last_key = (int32_t)k;
+            note_on(note, v);
+            plat_midi_send(0x09u | 0x90u << 8 | (uint32_t)note << 16 | v << 24, TO_USB | TO_BLE);   /* BLE: if built with it */
         } else if (!(keys & bit) && (ui.keys & bit)) {
+            ui.prs[k] = 0;
             note_off(note);
             plat_midi_send(0x08u | 0x80u << 8 | (uint32_t)note << 16, TO_USB | TO_BLE);
+        } else if ((keys & bit) && touch_pressure(k) != ui.prs[k]) {   /* pressure: poly aftertouch */
+            ui.prs[k] = touch_pressure(k);
+            ui.redraw = 1;
+            plat_midi_send(0x0Au | 0xA0u << 8 | (uint32_t)note << 16 | (uint32_t)ui.prs[k] << 24, TO_USB | TO_BLE);
         }
     }
     for (k = 0; k < NB; k++) {               /* a button pressed: its name, and what it does here */
@@ -259,6 +277,19 @@ static void cell(int32_t x, int32_t y, int32_t w, const char *s, int on)   /* a 
     cv_text(x + (w - text_w(&FONT_XS, s)) / 2, y + 2, &FONT_XS, s, on ? C_BLACK : C_GRAY);
 }
 
+static void key_cell(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t k, uint16_t off)
+{
+    int32_t v, p;
+    cv_rect(x, y, w, h, off);
+    if (!(ui.keys >> k & 1u))
+        return;
+    v = (ui.vel[k] * h + 126) / 127;
+    p = (ui.prs[k] * h + 126) / 127;
+    cv_rect(x, y + h - v, w, v, C_HI);
+    if (p)
+        cv_rect(x + 2, y + h - p, w - 4, p, C_WHITE);
+}
+
 static void draw(void)
 {
     char t[24];
@@ -271,10 +302,23 @@ static void draw(void)
         int32_t x = cv_text(10, 6, &FONT_B, ui.msg[0], C_WHITE);
         cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
     } else {
-        cv_text(10, 6, &FONT_B, APP_NAME, C_WHITE);
-        if (note >= 0) {
+        int32_t x = cv_text(10, 6, &FONT_B, APP_NAME, C_WHITE);
+        if (FM1B_BLE)                        /* Bluetooth: grey while it waits, lit while a computer is connected */
+            cv_text(x + 8, 10, &FONT_XS, "BLE", plat_ble_connected() ? C_HI : C_DIM);
+        if (note >= 0) {                     /* the note, and the last key's velocity and pressure */
+            int32_t x;
             note_name(note, t);
-            cv_text(230 - text_w(&FONT_B, t), 6, &FONT_B, t, C_HI);
+            x = 230 - text_w(&FONT_B, t);
+            cv_text(x, 6, &FONT_B, t, C_HI);
+            if (ui.keys >> ui.last_key & 1u) {
+                char n[24] = "V ";
+                int_text(ui.vel[ui.last_key], t);
+                text_cat(n, t);
+                text_cat(n, "  P ");
+                int_text(ui.prs[ui.last_key], t);
+                text_cat(n, t);
+                cv_text(x - 12 - text_w(&FONT_XS, n), 10, &FONT_XS, n, C_GRAY);
+            }
         }
     }
     cv_blit(0, 0);
@@ -290,35 +334,36 @@ static void draw(void)
         cv_text(x, y + 13, &FONT_XS, t, lit ? C_WHITE : C_DIM);
     }
     cv_blit(0, 36);
-    /* the keys, black above white, lit while held; then the settings */
+    /* the keys, black above white: a held key fills to its velocity (amber), its pressure over that (white) */
     cv_begin(240, 60, C_BLACK);
     for (i = 0; i < 16u; i++)
-        cv_rect(4 + (int32_t)i * 14, 14, 13, 12, (ui.keys >> WK[i]) & 1u ? C_HI : C_DIM);
+        key_cell(4 + (int32_t)i * 14, 14, 13, 14, WK[i], C_DIM);
     for (i = 0; i < 11u; i++) {
         static const uint8_t AT[11] = {0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14};   /* the white key each one follows */
-        cv_rect(4 + (int32_t)AT[i] * 14 + 8, 0, 11, 12, (ui.keys >> BK[i]) & 1u ? C_HI : C_LINE);
+        key_cell(4 + (int32_t)AT[i] * 14 + 8, 0, 11, 12, BK[i], C_LINE);
     }
     octave_text(t);
-    cv_text(4, 34, &FONT_XS, "OCT", C_GRAY);
-    cv_text(30, 34, &FONT_XS, t, C_HI);
-    cv_text(64, 34, &FONT_XS, "PRESET", C_GRAY);
-    cv_text(112, 34, &FONT_XS, WAVE_NAME[set.wave], C_HI);
-    cv_text(178, 34, &FONT_XS, "VOL", C_GRAY);
+    cv_text(4, 36, &FONT_XS, "OCT", C_GRAY);
+    cv_text(30, 36, &FONT_XS, t, C_HI);
+    cv_text(64, 36, &FONT_XS, "PRESET", C_GRAY);
+    cv_text(112, 36, &FONT_XS, WAVE_NAME[set.wave], C_HI);
+    cv_text(178, 36, &FONT_XS, "VOL", C_GRAY);
     int_text((int32_t)pct, t);
     text_cat(t, "%");
-    cv_text(204, 34, &FONT_XS, t, C_HI);
+    cv_text(204, 36, &FONT_XS, t, C_HI);
     cv_blit(0, 180);
 }
 
 void app_ui_init(void)
 {
+    touch_on(1);                             /* velocity and pressure: the keys' readings on */
     lcd_fill(0, 0, 240, 240, C_BLACK);
     ui.redraw = 1;
 }
 
 void app_frame(void)
 {
-    static uint32_t last_pct, lit_until;
+    static uint32_t last_pct, lit_until, last_ble;
     uint32_t i, now = plat_ms(), pct = plat_master() * 100u / 4096u;
     input();
     speak();
@@ -329,8 +374,9 @@ void app_frame(void)
         lit_until = 0;
         ui.redraw = 1;
     }
-    if (pct != last_pct || (ui.msg_until && now >= ui.msg_until)) {
+    if (pct != last_pct || (uint32_t)plat_ble_connected() != last_ble || (ui.msg_until && now >= ui.msg_until)) {
         last_pct = pct;
+        last_ble = (uint32_t)plat_ble_connected();
         if (now >= ui.msg_until)
             ui.msg_until = 0;
         ui.redraw = 1;
@@ -352,6 +398,10 @@ int app_expect(const char *what, int *got)
         *got = voice_note;
     else if (!strcmp(what, "dirty"))
         *got = set_dirty;
+    else if (!strcmp(what, "vel"))           /* the last key's velocity and pressure */
+        *got = ui.vel[ui.last_key];
+    else if (!strcmp(what, "prs"))
+        *got = ui.prs[ui.last_key];
     else if (!strncmp(what, "turns", 5))    /* turnsN: encoder N's count (plat.h EN_*) */
         *got = ui.turns[atoi(what + 5) % NE];
     else

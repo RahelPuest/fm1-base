@@ -58,3 +58,16 @@ master 4096
 wait 50
 wavstop
 midi 80 45 00
+# velocity and pressure (lib/touch.c): a key landing at 40 plays at about 40; pressed 80 % more, it has pressure
+key 7 down 40
+wait 60
+expect vel >30
+expect vel <50
+key 7 up
+wait 50
+key 7 down 100 80
+wait 600
+expect prs >40
+shot touch.png
+key 7 up
+wait 50

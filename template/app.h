@@ -9,10 +9,12 @@
 #define APP_NAME "TEMPLATE"
 #define APP_SPLASH_RGB RGB(242, 120, 72)
 #define APP_BLOCK 256u                   /* frames per audio block: 5.8 ms at 44.1 kHz */
+#define APP_TOUCH                        /* velocity and pressure from the keys (lib/touch.h) */
 
-/* the store: the app's objects, the panel calibration (the platform's) among them, and their flash offsets */
-enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_NOBJ };
-#define APP_STORE_MAP {0xFC000u, 0xDC000u}
+/* the store: the app's objects, the panel calibration (the platform's) and Bluetooth's address and pairing among
+ * them, and their flash offsets */
+enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_BLE, OBJ_NOBJ };
+#define APP_STORE_MAP {0xFC000u, 0xDC000u, 0xDE000u}
 
 /* the contract: the platform calls these */
 void app_init(void);                     /* boot: the engine, then the saved settings (or defaults) */

@@ -2,7 +2,7 @@
 #   template/build/host/template_host template/tests/screens.txt template/docs/img
 wait 900
 shot screen-ready.png
-key 7 down
+key 7 down 90 50
 press FX
 turn K3 3
 wait 1400
