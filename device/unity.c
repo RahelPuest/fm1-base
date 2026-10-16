@@ -16,7 +16,8 @@
  *   FM1B_CDC 0              USB serial console (a second USB function)
  *   FM1B_UAC 0              USB audio input (the master output, recordable over the cable): off until
  *                           felucca-bsp's usb.c is checked at this block size on a device
- *   FM1B_TRS 1              MIDI in on the TRS jack */
+ *   FM1B_TRS 1              MIDI in on the TRS jack
+ *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -158,6 +159,11 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
     return ota_wire_send(p, n);
 }
 #include "panel.c"
+#if FM1B_BLE
+#include "ble.c"                  /* Bluetooth MIDI on JieLi's BT libraries (ble/: the shim, the MIDI service) */
+#else
+#include "ble_none.c"             /* the build without Bluetooth: nothing of JieLi's linked */
+#endif
 #include "plat_fm1.c"
 #include "app.c"
 #include "main_fm1.c"

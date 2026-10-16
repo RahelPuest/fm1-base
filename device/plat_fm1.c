@@ -102,6 +102,7 @@ void plat_unlock(uint32_t f)
 }
 void plat_yield(void)
 {
+    ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
 #ifdef APP_YIELD
     app_yield();
 #endif
@@ -109,7 +110,7 @@ void plat_yield(void)
 
 /* MIDI: the rings carry 4-byte USB-MIDI event packets, byte 0 = cable / CIN. USB and the TRS jack share midi_in_q
  * (both from TIMER5); the jack's packets carry cable 1 (midi_uart.c), which the single-jack USB descriptor never
- * does. Bluetooth is the app's (APP_BLE_MIDI). */
+ * does. Bluetooth has its own queue (ble.c, main loop). */
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
@@ -120,10 +121,8 @@ int plat_midi_in(uint32_t *pkt, int *port)
         from = (p >> 4 & 0xFu) == 1u ? PORT_TRS : PORT_USB;
         *pkt = p & ~0xF0u;
     }
-#ifdef APP_BLE_MIDI
-    else if (app_ble_midi_in(pkt))
+    else if (ble_midi_in(pkt))
         from = PORT_BLE;
-#endif
     else
         return 0;
     if (port)
@@ -137,10 +136,8 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
         f = plat_lock();
     if (to & TO_USB)
         midi_out_event(pkt);
-#ifdef APP_BLE_MIDI
     if (to & TO_BLE)
-        app_ble_midi_out(pkt);
-#endif
+        ble_midi_tap(pkt);
     if (!in_tick)
         plat_unlock(f);
 }

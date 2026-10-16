@@ -4,7 +4,7 @@
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build an fm1-base firmware: the app, the update loader (felucca-bsp's) and an installable .fwsc package.
 
-  tools/build.py APP_DIR [--release X.Y[.Z][-suffix]]
+  tools/build.py APP_DIR [--release X.Y[.Z][-suffix]] [--no-ble]
   tools/build.py APP_DIR --host        the host simulator instead: APP_DIR/build/host/NAME_host (cc, no toolchain)
   tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
                                        simulator alone (panel, screen, sound, screen reader), for a site to link or frame
@@ -16,6 +16,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_product = "..."
   o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
+  ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
+                             --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
@@ -60,10 +62,14 @@ SDK_SHA256 = {
 
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
+BLE = False                         # fm1.toml ble = true, unless --no-ble
+BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_mac", "lmp_set_sniff_disable",
+           "shim_os_init", "ble_midi_send_many")
 
 
 def read_conf(path):
-    """fm1.toml: key = "string" | number | ["string", ...], # comments (the little TOML a firmware needs)"""
+    """fm1.toml: key = "string" | number | true | false | ["string", ...], # comments (the little TOML a firmware
+    needs)"""
     conf = {}
     for no, line in enumerate(path.read_text().splitlines(), 1):
         line = re.sub(r"\s+#.*$", "", line).strip()
@@ -77,6 +83,8 @@ def read_conf(path):
             conf[m.group(1)] = re.findall(r'"([^"]*)"', v)
         elif v.startswith('"'):
             conf[m.group(1)] = v.strip('"')
+        elif v in ("true", "false"):
+            conf[m.group(1)] = v == "true"
         else:
             conf[m.group(1)] = int(v, 0)
     return conf
@@ -230,8 +238,62 @@ def inc(*dirs):
     return [f"-I{Path(d).resolve().relative_to(ROOT)}" for d in dirs]
 
 
+# ---- Bluetooth: JieLi's BT libraries (Apache-2.0, binary only; never in git) and a few SDK sources, on the shim
+# (ble/shim) and the MIDI service (ble/midi)
+BLE_LIBS = ["btctrler.a", "btstack.a", "crypto_toolbox_Osize.a", "lib_ccm_aes.a", "wl_rf_common.a"]
+BLE_SDK_SRC = ["apps/common/config/bt_profile_config.c",
+               "apps/common/config/log_config/lib_btctrler_config.c",
+               "apps/common/config/log_config/lib_btstack_config.c"]
+BLE_INC = ["include_lib", "include_lib/driver", "include_lib/driver/device", "include_lib/driver/cpu/wl82",
+           "include_lib/system", "include_lib/system/generic", "include_lib/btctrler",
+           "include_lib/btctrler/port/wl82", "include_lib/update", "include_lib/btstack/third_party/common",
+           "include_lib/btstack/third_party/rcsp", "include_lib/utils", "include_lib/utils/syscfg",
+           "include_lib/utils/event", "include_lib/media", "include_lib/media/cpu/wl82", "apps",
+           "apps/demo/demo_ble/include", "apps/common", "apps/common/include", "apps/common/config/include",
+           "include_lib/btstack", "include_lib/net", "apps/common/ble/include", "include_lib/newlib/include"]
+BLE_CF = ["-integrated-as", "-mcpu=r3", "-mfprev1", "-fno-common", "-Oz", "-flto", "-fallow-pointer-null",
+          "-fprefer-gnu-section", "-femulated-tls", "-fms-extensions", "-w", "-DSUPPORT_MS_EXTENSIONS",
+          "-DCONFIG_RELEASE_ENABLE", "-DCONFIG_CPU_WL82", "-DCONFIG_FREE_RTOS_ENABLE", "-DCONFIG_THREAD_ENABLE",
+          "-D__GCC_PI32V2__", "-DCONFIG_NEW_ECC_ENABLE", "-DCONFIG_SFC_ENABLE", "-DCONFIG_NO_SDRAM_ENABLE",
+          "-DCONFIG_BT_ENABLE=1", "-mllvm", "-pi32v2-large-program=true"]
+
+
+def ble_units():
+    """copy what the Bluetooth build needs from the SDK into build/ble (the container sees only this tree);
+    return the compile commands, the objects and the link's libraries"""
+    import shutil
+    sdk = Path(os.environ.get("AC79_SDK", Path.home() / "fw-AC79_AIoT_SDK"))
+    dst = OUT / "ble" / "sdk"
+    if not (dst / ".copied").exists():
+        for d in ("include_lib", "apps/common/include", "apps/common/config/include", "apps/common/ble/include",
+                  "apps/demo/demo_ble/include"):
+            shutil.copytree(sdk / d, dst / d, dirs_exist_ok=True,
+                            ignore=lambda dd, names: [n for n in names if (Path(dd) / n).is_file()
+                                                      and not n.endswith((".h", ".hpp"))])
+        for f in BLE_SDK_SRC:
+            (dst / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(sdk / f, dst / f)
+        (dst / "lib").mkdir(exist_ok=True)
+        for f in BLE_LIBS:
+            shutil.copy(sdk / "cpu/wl82/liba" / f, dst / "lib" / f)
+        shutil.copy(sdk / "include_lib/newlib/pi32v2-lib/libcompiler_rt.a", dst / "lib")
+        (dst / ".copied").write_text("")
+    flags = [*inc(*(dst / d for d in BLE_INC)), *inc(SRC / "ble" / "shim")]
+    o = OUT / "ble" / "o"
+    o.mkdir(parents=True, exist_ok=True)
+    units = [("cc", "-c", SRC / "ble" / "shim" / "ctx.S", "-o", o / "ctx.o")]
+    objs = [o / "ctx.o"]
+    for f in [*(SRC / "ble" / "shim").glob("*.c"), *(SRC / "ble" / "midi").glob("*.c"), *[dst / s for s in BLE_SDK_SRC]]:
+        units.append(("cc", *BLE_CF, *flags, "-c", f, "-o", o / (f.stem + ".o")))
+        objs.append(o / (f.stem + ".o"))
+    libs = ["--start-group", *[dst / "lib" / f for f in BLE_LIBS], dst / "lib" / "libcompiler_rt.a", "--end-group"]
+    return units, objs, libs
+
+
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN)]
+    if BLE:
+        flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_TRS"):
         v = os.environ.get(flag)    # unset: the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):
@@ -253,11 +315,16 @@ def build_app():
         o = OUT / "o2" / (u.replace("/", "_").rsplit(".", 1)[0] + ".o")
         units.append(("cc", *o2, "-c", APP / u, "-o", o))
         objs.append(o)
-    tc_all(*units)
+    b_units, b_objs, b_libs = ble_units() if BLE else ([], [], [])
+    tc_all(*units, *b_units)
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
-    # mono reference paths for the host tests that the firmware no longer calls
-    tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", SRC / "device" / "app.ld", *objs, "-o", elf)
+    # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
+    # bitcode: the linker needs the toolchain's LLVM plugin
+    lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
+           "--plugin-opt=mcpu=r3", "--plugin-opt=-pi32v2-large-program=true"] if BLE else []
+    tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", SRC / "device" / "app.ld", *objs, *b_objs,
+       *b_libs, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
@@ -295,7 +362,9 @@ def check(img, syms, dis, rt):
     if img[:4] != bytes.fromhex("04818000"):
         errors.append(f"image starts with {img[:4].hex()}, not the entry stub")
     rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln)]
-    if rt_calls:                    # RAM code runs with the flash off: no calls into XIP
+    if rt_calls and BLE:            # JieLi's .volatile_ram_code calls out; it runs with the flash on
+        notes.append(f"Bluetooth: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
+    elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
         notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
@@ -307,11 +376,19 @@ def check(img, syms, dis, rt):
             val = (int(v[0]) & 0xFFFFFFFF) if v[0] else int(v[1], 16) & 0xFFFFFFFF
             if 0xFFC00000 <= val < 0xFFD00000:
                 errors.append(f"reference to ROM address {val:#010x}")
+    bt = [n for n in BT_SYMS if re.search(r"\s" + n + r"$", syms, re.M)]
+    if CONF.get("ble") and not BLE:
+        if bt:
+            errors.append(f"--no-ble build links Bluetooth code: {bt}")
+        else:
+            notes.append("--no-ble: no Bluetooth code linked")
     if len(img) > APP_SLOT:
         errors.append(f"image {len(img)} B exceeds the app slot")
     # the FPU is single precision; a soft-double routine in the image means a double crept in
     soft = sorted(set(re.findall(r"\s(__(?:add|sub|mul|div|neg|cmp|eq|ne|lt|le|gt|ge|un|extendsf|truncdf|fixdf|fixunsdf|floatsidf|floatunsidf|floatdidf)\w*df\w*)$", syms, re.M)))
-    if soft:
+    if soft and BLE:
+        notes.append(f"soft-double routines linked (JieLi's radio setup): {soft[:6]}")
+    elif soft:
         errors.append(f"soft-double routines linked: {soft[:6]} (a double in the code)")
     else:
         notes.append("no soft-double routines (single-precision FPU only)")
@@ -383,7 +460,7 @@ def build_host():
     out.mkdir(parents=True, exist_ok=True)
     exe = out / (NAME + "_host")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
-           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST",
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN)),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -401,7 +478,7 @@ def build_web():
     emu = OUT / "emu"
     emu.mkdir(parents=True, exist_ok=True)
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", APP, GEN)),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
@@ -430,10 +507,11 @@ def build_web():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
+    ap.add_argument("--no-ble", action="store_true", help="without Bluetooth (fm1.toml ble = true): NAME-usb.fwsc")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--host", action="store_true", help="build the host simulator instead of the firmware")
     ap.add_argument("--web", action="store_true", help="build the browser emulator instead of the firmware")
@@ -441,6 +519,8 @@ def main():
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
     NAME = CONF.get("name", APP.name).lower()
+    BLE = bool(CONF.get("ble")) and not a.no_ble
+    stem = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
     OUT = APP / "build"
     GEN, LDR = OUT / "gen", OUT / "loader"
     ROOT = Path(os.path.commonpath([SRC, APP]))
@@ -448,7 +528,7 @@ def main():
     if not re.fullmatch(r"FM-1_\d+", prefix):
         raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
     PRODUCT = prefix + "00"
-    name = NAME + ".fwsc"
+    name = stem + ".fwsc"
     if a.release:
         # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
         # model the update tools match on; the digits after the underscore are the firmware's.
@@ -457,7 +537,7 @@ def main():
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
-        name = f"{NAME}-{a.release}.fwsc"
+        name = f"{stem}-{a.release}.fwsc"
     if a.host or a.web:
         generate()
         return build_host() if a.host else build_web()

@@ -32,7 +32,17 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     {
         uint32_t k;
         for (k = 0; k < HALF_FRAMES; k += REND_FRAMES) {
-            app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
+            if (ble_quiet) {                        /* the radio calibrating: no flash reads (ble.c) */
+#ifdef APP_QUIET
+                app_quiet(o + 2u * k, REND_FRAMES);
+#else
+                uint32_t i;
+                for (i = 0; i < 2u * REND_FRAMES; i++)
+                    o[2u * k + i] = 0;
+#endif
+            } else {
+                app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
+            }
 #if FELUCCA_UAC
             uac_tap(o + 2u * k, REND_FRAMES);       /* the USB audio input: the same master output */
 #endif
@@ -308,6 +318,9 @@ static void fm1_main(void)
     if ((fm1_in.buttons & 3u) == 3u)
         panel_setup();                              /* OCT- + OCT+ held at power-on */
     fm1_delay_ms(400);
+    ble_boot_note();                                /* what ended the last Bluetooth run, into its log */
+    if (!ble_last_bad)
+        ble_start();                                /* Bluetooth is on, as on the stock firmware */
 #ifdef APP_BOOT
     app_boot();                                     /* the app's own start (a radio), the platform up */
 #endif
@@ -327,6 +340,7 @@ static void fm1_main(void)
                 master_pos = (uint32_t)(knob / 4);
             }
         }
+        ble_poll();                                 /* Bluetooth's tasks, once started */
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif

@@ -47,13 +47,27 @@ void plat_glow(int on);
 void plat_play_red(int red);
 
 /* MIDI: 4-byte USB-MIDI event packets (byte 0 = cable / CIN, then status, data 1, data 2). In from USB, the TRS jack
- * (in only: the FM-1 has no MIDI out jack) and Bluetooth (an app with APP_BLE_MIDI); out to USB and Bluetooth. */
+ * (in only: the FM-1 has no MIDI out jack) and Bluetooth (FM1B_BLE); out to USB and Bluetooth. */
 enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_USB (1u << PORT_USB)
 #define TO_BLE (1u << PORT_BLE)
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE; main loop, the render or the tick */
 void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
+
+/* Bluetooth MIDI (fm1.toml ble = true: FM1B_BLE 1): JieLi's BT libraries on fm1-base's shim (ble/), started at
+ * every boot unless the last Bluetooth run crashed (then by hand: plat_ble_start). The app gives it a store object,
+ * OBJ_BLE (the radio's address and pairing). Without it (FM1B_BLE 0, tools/build.py --no-ble) nothing of JieLi's is
+ * linked, and the state stays BLE_OFF */
+#ifndef FM1B_BLE
+#define FM1B_BLE 0
+#endif
+enum { BLE_OFF, BLE_STARTING, BLE_READY, BLE_FAILED };
+int plat_ble_state(void);
+int plat_ble_connected(void);          /* a central is connected and listening */
+void plat_ble_start(void);
+uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
+const char *plat_ble_log_line(int back);   /* 0 = the newest */
 
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share (it nests) */
@@ -87,7 +101,8 @@ uint32_t plat_xruns(void);
  *   APP_OVERLOAD    void app_overload(void)       the render took over 90 % of its time (shed voices)
  *   APP_SPLASH      void app_splash(void)         the first screen at boot, instead of the name
  *   APP_GAIN(m)     the render's gain from MASTER's position m (0..4096; default the square, m * m >> 12)
- *   APP_BLE_MIDI    int app_ble_midi_in(uint32_t *pkt), void app_ble_midi_out(uint32_t pkt): Bluetooth MIDI
+ *   APP_QUIET       void app_quiet(int32_t *lr, uint32_t n)   the render while the flash must not be read (the
+ *                   radio's first second, FM1B_BLE): keep time without sound (default: silence)
  *   APP_KEY_SENSE   void app_key_sample(uint32_t key, uint32_t v, uint32_t ticks, int driven) (rows PA7 / PA8),
  *                   int app_key_drive(uint32_t key) (read it driven), void app_key_probe(uint32_t key, uint32_t v,
  *                   uint32_t pressed) (the top row), int app_key_led_ok(uint32_t key) (0: its column dark when read);
