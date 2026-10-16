@@ -68,6 +68,7 @@ SDK_SHA256 = {
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
+STEM = None                         # the build's file names: NAME, or NAME-usb (--no-ble)
 BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_mac", "lmp_set_sniff_disable",
            "shim_os_init", "ble_midi_send_many")
 
@@ -476,7 +477,7 @@ def build_host():
     device (no fused multiply-add), so the samples match"""
     out = OUT / "host"
     out.mkdir(parents=True, exist_ok=True)
-    exe = out / (NAME + "_host")
+    exe = out / (STEM + "_host")                  # NAME_host; NAME-usb_host with --no-ble
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
@@ -528,7 +529,7 @@ def build_web():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -541,7 +542,7 @@ def main():
     CONF = read_conf(APP / "fm1.toml")
     NAME = CONF.get("name", APP.name).lower()
     BLE = bool(CONF.get("ble")) and not a.no_ble
-    stem = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
+    STEM = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
     OUT = APP / "build"
     GEN, LDR = OUT / "gen", OUT / "loader"
     ROOT = Path(os.path.commonpath([SRC, APP]))
@@ -549,7 +550,7 @@ def main():
     if not re.fullmatch(r"FM-1_\d+", prefix):
         raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
     PRODUCT = prefix + "00"
-    name = stem + ".fwsc"
+    name = STEM + ".fwsc"
     if a.release:
         # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
         # model the update tools match on; the digits after the underscore are the firmware's.
@@ -558,7 +559,7 @@ def main():
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
         PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper()
-        name = f"{stem}-{a.release}.fwsc"
+        name = f"{STEM}-{a.release}.fwsc"
     if a.host or a.web:
         generate()
         return build_host() if a.host else build_web()
