@@ -202,10 +202,10 @@ static void input(void)
         int32_t note = 53 + (int32_t)k + 12 * set.octave;
         if ((keys & bit) && !(ui.keys & bit)) {
             note_on(note);
-            plat_midi_out(0x09u | 0x90u << 8 | (uint32_t)note << 16 | 100u << 24);
+            plat_midi_send(0x09u | 0x90u << 8 | (uint32_t)note << 16 | 100u << 24, TO_USB | TO_BLE);   /* BLE: if built with it */
         } else if (!(keys & bit) && (ui.keys & bit)) {
             note_off(note);
-            plat_midi_out(0x08u | 0x80u << 8 | (uint32_t)note << 16);
+            plat_midi_send(0x08u | 0x80u << 8 | (uint32_t)note << 16, TO_USB | TO_BLE);
         }
     }
     for (k = 0; k < NB; k++) {               /* a button pressed: its name, and what it does here */
