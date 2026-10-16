@@ -127,6 +127,9 @@ void plat_unlock(uint32_t f)
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
+#if FM1B_WIFI
+    wifi_poll();                                  /* WiFi's tasks, once on */
+#endif
 #ifdef APP_YIELD
     app_yield();
 #endif
@@ -134,7 +137,7 @@ void plat_yield(void)
 
 /* MIDI: the rings carry 4-byte USB-MIDI event packets, byte 0 = cable / CIN. USB and the TRS jack share midi_in_q
  * (both from TIMER5); the jack's packets carry cable 1 (midi_uart.c), which the single-jack USB descriptor never
- * does. Bluetooth has its own queue (ble.c, main loop). */
+ * does. Bluetooth has its own queue (radio.c, main loop). */
 /* each port's messages, in and out (plat_midi_count): for the app's MIDI lights and counters */
 static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];
 static void midi_counted(int port, int out)

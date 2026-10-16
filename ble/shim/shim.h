@@ -36,6 +36,11 @@ typedef struct {
 typedef struct { uint32_t opaque[20]; } OS_SEM;
 typedef OS_SEM OS_MUTEX;
 
+/* SHIM_WIFI (fm1.toml wifi = true, tools/build.py): JieLi's OS as the WiFi library needs it (os.c) */
+#ifndef SHIM_WIFI
+#define SHIM_WIFI 0
+#endif
+
 /* the platform (the firmware) */
 uint32_t shim_ms(void);
 uint32_t shim_irq_save(void);
@@ -45,6 +50,12 @@ void shim_idle(void);                 /* the main loop has nothing to run: retur
 void shim_request_irq(int index, int prio, void (*handler)(void));
 void shim_reboot(void);
 void shim_wdt(void);                  /* feed the watchdog: long hardware loops (the radio's calibration) */
+int shim_task_pid(const char *name);  /* thread_fork's pid: the task's slot, 0 = none */
+int shim_task_last(void);             /* the slot task_create filled last */
+void shim_task_end(int pid);
+uint32_t shim_irq_hold(void);         /* SHIM_WIFI: interrupts off; the current nesting (a task switch) */
+void shim_irq_resume(uint32_t depth); /* SHIM_WIFI: a task resumes: its nesting, interrupts on at 0 */
+void shim_timers_post(void);          /* due timers posted to their owners (a task's idle) */
 void shim_delay_us(uint32_t us);      /* a busy wait in RAM (.ram_text), the watchdog fed: the radio trim's delays */
 void shim_log(const char *s);         /* a line for the screen's log */
 int shim_store_load(void *dst, uint32_t max);   /* syscfg's flash object */

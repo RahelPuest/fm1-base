@@ -87,6 +87,29 @@ int plat_ble_device(void);             /* BLE_DEV_*: READY is connected, MIDI bo
  * default 1) */
 void plat_ble_enable(int on);
 
+/* WiFi (fm1.toml wifi = true: FM1B_WIFI 1): a station on JieLi's WiFi libraries and the SDK's lwIP, on the same shim.
+ * Off until the app turns it on; then it joins the networks it joined before (kept in the app's store object OBJ_WIFI,
+ * six, the most recent first). The app's network code runs in a task of its own (plat_net_task) with lwIP's sockets
+ * (lwip/sockets.h): a socket call waits, and the main loop must not. A build has Bluetooth or WiFi, not both (yet). */
+#ifndef FM1B_WIFI
+#define FM1B_WIFI 0
+#endif
+enum { WIFI_OFF, WIFI_STARTING, WIFI_ON, WIFI_JOINING, WIFI_ADDRESS, WIFI_CONNECTED, WIFI_FAILED };
+void plat_wifi_on(int on);             /* on: the radio starts (its first second holds the sound) and joins */
+int plat_wifi_state(void);             /* WIFI_*: ON is on with no network; ADDRESS, joined and asking for one */
+const char *plat_wifi_why(void);       /* WIFI_FAILED: "not found", "wrong password?", "no address"... */
+const char *plat_wifi_ssid(void);      /* the network joined, or being joined */
+uint32_t plat_wifi_ip(void);           /* connected: the address, its first byte lowest; else 0 */
+int plat_wifi_rssi(void);              /* connected: the signal */
+int plat_wifi_scan(void);              /* the networks around: plat_wifi_found once it is done (0 = asked) */
+int plat_wifi_found(int i, char *ssid, int *rssi, int *secured);   /* the scan's network i (ssid: 33 bytes), the
+                                                                     * strongest first; 0 = none */
+int plat_wifi_join(const char *ssid, const char *pass);   /* pass 0: the saved one's, or none; kept once joined */
+int plat_wifi_saved(int i, char *ssid);   /* the networks kept, the most recent first; 0 = none */
+void plat_wifi_forget(int i);
+int plat_net_task(void (*fn)(void *), void *arg, const char *name);   /* a task for the app's network code (8 KiB
+                                                                        * of stack); 0 = made */
+
 /* the 1 kHz tick (app_tick, an app with APP_TICK) runs in the timer interrupt: the main loop locks it out around
  * what they share (it nests) */
 uint32_t plat_lock(void);

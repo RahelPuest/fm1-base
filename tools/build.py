@@ -28,6 +28,12 @@ Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio
 app.h); the build prints what it has.
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
                              --no-ble builds without it (NAME-usb.fwsc), and the build checks nothing of JieLi's is in
+  wifi = true                WiFi (FM1B_WIFI): a station on JieLi's WiFi libraries and the SDK's lwIP (built from its
+                             sources), on the same shim (ble/shim, ble/wifi) with fm1-radio's RAM split (device/
+                             app_wifi.ld). Not with ble (yet)
+  net = ["net/stream.c"]     with wifi: the app's network code (lwIP's sockets), compiled as the SDK builds code that
+                             talks lwIP (its flags and headers), relative to APP_DIR; it calls the platform through
+                             plat.h, runs in a task of its own (plat_net_task)
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
@@ -73,6 +79,7 @@ SDK_SHA256 = {
 PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
 VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
 BLE = False                         # fm1.toml ble = true, unless --no-ble
+WIFI = False                        # fm1.toml wifi = true
 STEM = None                         # the build's file names: NAME, or NAME-usb (--no-ble)
 BT_SYMS = ("btstack_init", "bt_ble_init", "bt_max_pwr_set", "le_controller_set_mac", "lmp_set_sniff_disable",
            "shim_os_init", "ble_midi_send_many")
@@ -271,6 +278,22 @@ BLE_INC = ["include_lib", "include_lib/driver", "include_lib/driver/device", "in
            "include_lib/utils/event", "include_lib/media", "include_lib/media/cpu/wl82", "apps",
            "apps/demo/demo_ble/include", "apps/common", "apps/common/include", "apps/common/config/include",
            "include_lib/btstack", "include_lib/net", "apps/common/ble/include", "include_lib/newlib/include"]
+# WiFi: the SDK's no-SDRAM builds (demo_audio) link the _sfc variants: smaller buffers, code from flash (fm1-radio's)
+WIFI_LIBS = ["wl_wifi_sta_sfc.a", "wpasupplicant.a", "hsm.a"]
+RADIO_LIBS = ["crypto_toolbox_Osize.a", "lib_ccm_aes.a", "wl_rf_common.a"]   # (either radio's)
+# lwIP from the SDK's sources (its _sfc project's files and flags), with ble/lwip/lwipopts_sfc.h: a wider TCP window
+LWIP_DIRS = ["src/api", "src/core", "src/core/ipv4", "src/netif", "port", "apps/sock_api", "apps/dhcp_srv", "apps/ntp"]
+LWIP_SKIP = {"bridgeif.c", "bridgeif_fdb.c", "lowpan6.c", "lowpan6_ble.c", "lowpan6_common.c", "slipif.c", "zepif.c",
+             "bt_ethernetif.c", "lte_ethernetif.c", "wired_ethernetif.c", "ext_wireless_ethernetif.c",
+             "wifi_raw_ethernetif.c", "ethernetif.c"}
+LWIP_CF = ["-D_POSIX_SOURCE", "-D_SYS_SELECT_H", "-DUSE_RTOS", "-DLIWP_USE_SMALL_MEMORY", "-Wno-unused-value"]
+LWIP_INC = ["include_lib/net/device", "include_lib/net/device/eth", "include_lib/net/lwip_2_1_3/lwip/app",
+            "include_lib/net/lwip_2_1_3/lwip/app/sock_api", "include_lib/net/lwip_2_1_3/lwip/app/dhcp_srv",
+            "include_lib/net/lwip_2_1_3/lwip/port/arch", "include_lib/net/lwip_2_1_3/lwip/src/include/lwip",
+            "include_lib/system/device", "include_lib/system/os/FreeRTOS/pi32_lto"]
+WIFI_INC = ["include_lib/net/wifi", "include_lib/net/lwip_2_1_3/lwip/src/include",
+            "include_lib/net/lwip_2_1_3/lwip/src/include/lwip", "include_lib/net/lwip_2_1_3/lwip/src/include/netif",
+            "include_lib/net/lwip_2_1_3/lwip/port", "include_lib/net/lwip_2_1_3/lwip/port/arch", "include_lib/net/HSM"]
 BLE_CF = ["-integrated-as", "-mcpu=r3", "-mfprev1", "-fno-common", "-Oz", "-flto", "-fallow-pointer-null",
           "-fprefer-gnu-section", "-femulated-tls", "-fms-extensions", "-w", "-DSUPPORT_MS_EXTENSIONS",
           "-DCONFIG_RELEASE_ENABLE", "-DCONFIG_CPU_WL82", "-DCONFIG_FREE_RTOS_ENABLE", "-DCONFIG_THREAD_ENABLE",
@@ -278,8 +301,8 @@ BLE_CF = ["-integrated-as", "-mcpu=r3", "-mfprev1", "-fno-common", "-Oz", "-flto
           "-DCONFIG_BT_ENABLE=1", "-mllvm", "-pi32v2-large-program=true"]
 
 
-def ble_units():
-    """copy what the Bluetooth build needs from the SDK into build/ble (the container sees only this tree);
+def radio_units():
+    """copy what the Bluetooth or WiFi build needs from the SDK into build/ble (the container sees only this tree);
     return the compile commands, the objects and the link's libraries"""
     import shutil
     sdk = Path(os.environ.get("AC79_SDK", Path.home() / "fw-AC79_AIoT_SDK"))
@@ -298,7 +321,18 @@ def ble_units():
             shutil.copy(sdk / "cpu/wl82/liba" / f, dst / "lib" / f)
         shutil.copy(sdk / "include_lib/newlib/pi32v2-lib/libcompiler_rt.a", dst / "lib")
         (dst / ".copied").write_text("")
-    flags = [*inc(*(dst / d for d in BLE_INC)), *inc(SRC / "ble" / "shim")]
+    if WIFI and not (dst / ".copied_wifi").exists():
+        for d in LWIP_DIRS:                       # lwIP's sources
+            for c in (sdk / "lib/net/lwip_2_1_3" / d).glob("*.c"):
+                if c.name not in LWIP_SKIP:
+                    (dst / "lwip" / d).mkdir(parents=True, exist_ok=True)
+                    shutil.copy(c, dst / "lwip" / d / c.name)
+        for f in WIFI_LIBS:
+            shutil.copy(sdk / "cpu/wl82/liba" / f, dst / "lib" / f)
+        (dst / ".copied_wifi").write_text("")
+    flags = [*inc(*(dst / d for d in BLE_INC + WIFI_INC * WIFI)), *inc(SRC / "ble" / "shim")]
+    if WIFI:
+        flags += ["-DSHIM_WIFI=1"]
     o = OUT / "ble" / "o"
     o.mkdir(parents=True, exist_ok=True)
     units = [("cc", "-c", SRC / "ble" / "shim" / "ctx.S", "-o", o / "ctx.o")]
@@ -308,7 +342,7 @@ def ble_units():
     # controller's link count, the multi-link stack). Written from the SDK's each build, as this one wants it
     cfg = "apps/demo/demo_ble/include/app_config.h"
     text = (sdk / cfg).read_text(errors="ignore")
-    if CONF.get("ble_central"):
+    if BLE and CONF.get("ble_central"):
         flags.append("-DBLE_MIDI_CENTRAL=1")
         for old, new in (("#define TRANS_DATA_EN                             1",
                           "#define TRANS_DATA_EN                             0"),
@@ -325,11 +359,29 @@ def ble_units():
         (dst / cfg).write_text(text)
         for f in o.glob("*.o"):
             f.unlink()                            # (built for the other configuration)
-    for f in [*(SRC / "ble" / "shim").glob("*.c"), *(SRC / "ble" / "midi").glob("*.c"), *[dst / s for s in BLE_SDK_SRC]]:
+    ble_only = [*(SRC / "ble" / "midi").glob("*.c"), *[dst / s for s in BLE_SDK_SRC]] if BLE else []
+    for f in [*(SRC / "ble" / "shim").glob("*.c"), *ble_only]:
         units.append(("cc", *BLE_CF, *flags, "-c", f, "-o", o / (f.stem + ".o")))
         objs.append(o / (f.stem + ".o"))
-    libs = ["--start-group", *[dst / "lib" / f for f in BLE_LIBS], dst / "lib" / "libcompiler_rt.a", "--end-group"]
+    if WIFI:
+        lwip_inc = [*inc(SRC / "ble" / "lwip"), *flags, *inc(*(dst / d for d in LWIP_INC))]
+        for d in LWIP_DIRS:
+            for f in sorted((dst / "lwip" / d).glob("*.c")):
+                units.append(("cc", *BLE_CF, *LWIP_CF, *lwip_inc, "-c", f, "-o", o / ("lwip_" + f.stem + ".o")))
+                objs.append(o / ("lwip_" + f.stem + ".o"))
+        for f in (SRC / "ble" / "wifi").glob("*.c"):
+            units.append(("cc", *BLE_CF, *LWIP_CF, *lwip_inc, "-c", f, "-o", o / ("wifi_" + f.stem + ".o")))
+            objs.append(o / ("wifi_" + f.stem + ".o"))
+        app_inc = inc(APP, SRC / "include", *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))
+        for u in CONF.get("net", []):            # the app's network code: as the SDK builds code that talks lwIP
+            f = APP / u
+            units.append(("cc", *BLE_CF, *LWIP_CF, *lwip_inc, *app_inc, "-c", f,
+                          "-o", o / ("net_" + u.replace("/", "_").rsplit(".", 1)[0] + ".o")))
+            objs.append(o / ("net_" + u.replace("/", "_").rsplit(".", 1)[0] + ".o"))
+    linked = (BLE_LIBS if BLE else RADIO_LIBS) + WIFI_LIBS * WIFI
+    libs = ["--start-group", *[dst / "lib" / f for f in linked], dst / "lib" / "libcompiler_rt.a", "--end-group"]
     return units, objs, libs
+
 
 
 def build_app():
@@ -339,6 +391,8 @@ def build_app():
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
         if CONF.get("ble_central"):
             flags.append("-DFM1B_BLE_CENTRAL=1")
+    if WIFI:
+        flags += ["-DFM1B_WIFI=1", "-DSHIM_WIFI=1", *inc(SRC / "ble" / "shim")]
     for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
         if key in CONF and flag not in os.environ:
             flags.append(f"-D{flag}={int(bool(CONF[key]))}")
@@ -363,15 +417,16 @@ def build_app():
         o = OUT / "o2" / (u.replace("/", "_").rsplit(".", 1)[0] + ".o")
         units.append(("cc", *o2, "-c", APP / u, "-o", o))
         objs.append(o)
-    b_units, b_objs, b_libs = ble_units() if BLE else ([], [], [])
+    b_units, b_objs, b_libs = radio_units() if BLE or WIFI else ([], [], [])
     tc_all(*units, *b_units)
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
     # bitcode: the linker needs the toolchain's LLVM plugin
     lto = ["--plugin", "/opt/jieli/pi32v2/bin/LLVMgold.so" if use_docker() else str(toolchain() / "pi32v2/bin/LLVMgold.so"),
-           "--plugin-opt=mcpu=r3", "--plugin-opt=-pi32v2-large-program=true"] if BLE else []
-    tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", SRC / "device" / "app.ld", *objs, *b_objs,
+           "--plugin-opt=mcpu=r3", "--plugin-opt=-pi32v2-large-program=true"] if BLE or WIFI else []
+    ld = SRC / "device" / ("app_wifi.ld" if WIFI else "app.ld")
+    tc("pi32v2/bin/ld", *lto, "--gc-sections", "-e", "_start", "-T", ld, *objs, *b_objs,
        *b_libs, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
@@ -410,8 +465,8 @@ def check(img, syms, dis, rt):
     if img[:4] != bytes.fromhex("04818000"):
         errors.append(f"image starts with {img[:4].hex()}, not the entry stub")
     rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln)]
-    if rt_calls and BLE:            # JieLi's .volatile_ram_code calls out; it runs with the flash on
-        notes.append(f"Bluetooth: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
+    if rt_calls and (BLE or WIFI):  # JieLi's .volatile_ram_code calls out; it runs with the flash on
+        notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
@@ -434,7 +489,7 @@ def check(img, syms, dis, rt):
         errors.append(f"image {len(img)} B exceeds the app slot")
     # the FPU is single precision; a soft-double routine in the image means a double crept in
     soft = sorted(set(re.findall(r"\s(__(?:add|sub|mul|div|neg|cmp|eq|ne|lt|le|gt|ge|un|extendsf|truncdf|fixdf|fixunsdf|floatsidf|floatunsidf|floatdidf)\w*df\w*)$", syms, re.M)))
-    if soft and BLE:
+    if soft and (BLE or WIFI):
         notes.append(f"soft-double routines linked (JieLi's radio setup): {soft[:6]}")
     elif soft:
         errors.append(f"soft-double routines linked: {soft[:6]} (a double in the code)")
@@ -446,11 +501,12 @@ def check(img, syms, dis, rt):
         return int(mm.group(1), 16) if mm else 0
     bss = sym("_bss_end") - 0x01C08000
     pool = sym("_pool_end") - sym("_pool_start")
-    notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of 98304; pool {pool} B of {0x54000}")
-    if bss > 96 * 1024:
+    ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
+    notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
+    if bss > ram:
         errors.append("RAM region overflow")
-    if 0x54000 - pool < 8192:                     # keep >= 8 KiB of the pool spare
-        errors.append(f"pool headroom {0x54000 - pool} B < 8192 B")
+    if pool_max - pool < spare:                   # keep some of the pool spare
+        errors.append(f"pool headroom {pool_max - pool} B < {spare} B")
     return errors, notes
 
 
@@ -511,7 +567,7 @@ def build_host():
     out.mkdir(parents=True, exist_ok=True)
     exe = out / (STEM + "_host")                  # NAME_host; NAME-usb_host with --no-ble
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
-           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))),
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *(str(APP / u) for u in CONF.get("o2", [])), "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -529,7 +585,7 @@ def build_web():
     emu = OUT / "emu"
     emu.mkdir(parents=True, exist_ok=True)
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
@@ -563,7 +619,7 @@ def build_web():
 
 
 def main():
-    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, STEM
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME, BLE, WIFI, STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
@@ -576,6 +632,9 @@ def main():
     CONF = read_conf(APP / "fm1.toml")
     NAME = CONF.get("name", APP.name).lower()
     BLE = bool(CONF.get("ble")) and not a.no_ble
+    WIFI = bool(CONF.get("wifi"))
+    if BLE and WIFI:
+        raise SystemExit("fm1.toml: ble and wifi together are not supported yet (one radio a build; --no-ble for WiFi)")
     STEM = NAME + ("-usb" if CONF.get("ble") and not BLE else "")
     OUT = APP / "build"
     GEN, LDR = OUT / "gen", OUT / "loader"
@@ -621,7 +680,7 @@ def main():
     def on(key, env, default):
         v = os.environ.get(env)
         return v == "1" if v in ("0", "1") else bool(CONF.get(key, default))
-    parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))),
+    parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))), ("WiFi", WIFI),
              ("USB audio in", on("usb_audio_in", "FM1B_UAC", True)),
              ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
              ("velocity and pressure", any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M)

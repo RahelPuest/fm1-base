@@ -11,6 +11,7 @@ const char WIFI_PA_ENABLE = 0;
 const char wifi_temperature_drift_trim_on = 0;
 const u8 RFIinitUseTrimValue = 1;
 
+#ifndef SHIM_WIFI_RX_MODERATE                      /* (fm1-radio's moderate reception: ble/wifi/rf_moderate.c) */
 const u32 STF_END_CNT_THR_VAL = 190;
 const u32 STF_DET_CNT_THR_VAL = 12;
 const u32 DS_DET_CNT_THR0_VAL = 4;
@@ -303,4 +304,4 @@ const unsigned long wl_rfd_ram_lut [256][2] = {
     /*254*/{ 0x00000078, 0xD7E3687a},
     /*255*/{ 0x00000078, 0xD7E3687a},
 };
-
+#endif

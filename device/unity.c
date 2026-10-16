@@ -152,10 +152,10 @@ static void ota_show(uint32_t step, int32_t code)
     draw_text_box(0, 124, 240, &FONT_S, code == 1 ? "DRY RUN OK" : "FAILED", C_HI, 1);
     fm1_delay_ms(1500);
 }
-static void ble_clean_exit(void);
+static void radio_clean_exit(void);
 static void ota_commit(const uint8_t *parm)
 {
-    ble_clean_exit();                                   /* an update, not a crash: Bluetooth starts again after it */
+    radio_clean_exit();                                   /* an update, not a crash: Bluetooth starts again after it */
     bootguard.pending = 0;                              /* intentional reset */
     bootguard.failed = 0;                               /* a new install starts with a clean slate */
     usb_detach();
@@ -174,10 +174,14 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
     return ota_wire_send(p, n);
 }
 #include "panel.c"
-#if FM1B_BLE
-#include "ble.c"                  /* Bluetooth MIDI on JieLi's BT libraries (ble/: the shim, the MIDI service) */
+#if FM1B_BLE || FM1B_WIFI
+#include "radio.c"                /* the shim's platform, a radio's start; Bluetooth MIDI (FM1B_BLE, ble/: the shim, the
+                                   * MIDI service) */
 #else
-#include "ble_none.c"             /* the build without Bluetooth: nothing of JieLi's linked */
+#include "radio_none.c"           /* the build with no radio: nothing of JieLi's linked */
+#endif
+#if FM1B_WIFI
+#include "wifi.c"                 /* WiFi (ble/wifi/, the SDK's lwIP) */
 #endif
 #include "plat_fm1.c"
 #ifdef APP_TOUCH
