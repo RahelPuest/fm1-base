@@ -15,7 +15,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   id_prefix = "FM-1_0"       package identity: dev builds are the prefix + "00", releases the prefix + XXYYZZ
   usb_manufacturer = "..."   the USB names (felucca-bsp FELUCCA_USB_MANUFACTURER / FELUCCA_USB_PRODUCT)
   usb_product = "..."
-  o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR
+  o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR (globs too); each with
+                             its own directory on the include path
+  o2_cflags = ["-DX=1"]      more flags for those; o2_include = ["lib/prefix.h"]: a header included first in each
   include = ["dsp/lib"]      more include directories, relative to APP_DIR
   device_include = ["inc"]   include directories for the firmware only (headers the toolchain lacks)
   mmio_skip = ["dsp/lib/"]   paths whose numbers are not addresses (a library's tables): the register check skips
@@ -429,10 +431,13 @@ def build_app():
              ("cc", *flags, "-c", SRC / "device" / "unity.c", "-o", OUT / "unity.o")]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     (OUT / "o2").mkdir(parents=True, exist_ok=True)
+    o2_more = [*CONF.get("o2_cflags", []),
+               *[a for h in CONF.get("o2_include", []) for a in ("-include", str((APP / h).resolve().relative_to(ROOT)))]]
     for u in CONF.get("o2", []):
-        o = OUT / "o2" / (u.replace("/", "_").rsplit(".", 1)[0] + ".o")
-        units.append(("cc", *o2, "-c", APP / u, "-o", o))
-        objs.append(o)
+        for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
+            o = OUT / "o2" / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")
+            units.append(("cc", *o2, *o2_more, *inc(f.parent), "-c", f, "-o", o))
+            objs.append(o)
     b_units, b_objs, b_libs = radio_units() if BLE or WIFI else ([], [], [])
     tc_all(*units, *b_units)
     elf = OUT / (NAME + ".elf")
