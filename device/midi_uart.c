@@ -6,7 +6,7 @@
  * same context as usb_poll. Channel messages and Clock / Start / Continue / Stop go into midi_in_q
  * beside USB's, as USB-MIDI packets (cable 0, CIN = status >> 4), so the engine cannot tell them
  * apart; other system messages and SysEx are ignored (no SysEx -> UBOOT from the jack). */
-#include "../hal/fm1_uart.h"   /* registers; relative, so the host test finds it too */
+#include "fm1_uart.h"           /* registers (felucca-bsp chip/; the host test adds it to its include path) */
 
 #define UM_RING 128u
 static volatile uint8_t um_ring[UM_RING] __attribute__((aligned(16)));

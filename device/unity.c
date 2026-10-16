@@ -1,9 +1,22 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
-/* OMNI firmware for the M-VAVE FM-1: one compilation unit for the platform and the app
- * (Felucca's layout, as X0X: the HAL is header-only, so everything that touches it is here).
- * The instrument (dsp/omni.c) is a separate unit compiled at -O2 by tools/build.py; this one is
- * -Os. Order matters. */
+/* An fm1-base firmware for the M-VAVE FM-1: one compilation unit for the platform and the app
+ * (Felucca's layout: the chip and board layers are header-only, so everything that touches them is here).
+ * An app's heavy code (its DSP) may be separate units at -O2 (fm1.toml: o2); this one is -Os. Order matters.
+ *
+ * The app provides, on the include path:
+ *   app.h  its configuration (below) and the contract: app_init, app_render, app_panic, app_ui_init,
+ *          app_frame, app_input_only, app_say; its store objects (OBJ_PANEL among them, OBJ_NOBJ) and their
+ *          flash map APP_STORE_MAP
+ *   app.c  the app itself (its own unity build), compiled here after the platform
+ * Configuration, each with a default:
+ *   APP_NAME "TEMPLATE"     on the splash, crash and safe-mode screens and for the screen reader
+ *   APP_VERSION "DEV"       a release build passes its own (tools/build.py --release)
+ *   APP_BLOCK 256           frames per audio half (5.8 ms at 44.1 kHz), the render's block
+ *   FM1B_CDC 0              USB serial console (a second USB function)
+ *   FM1B_UAC 0              USB audio input (the master output, recordable over the cable): off until
+ *                           felucca-bsp's usb.c is checked at this block size on a device
+ *   FM1B_TRS 1              MIDI in on the TRS jack */
 #include <stdint.h>
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -26,25 +39,39 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 static inline int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-#include "app/plat.h"
+#include "plat.h"
+#include "app.h"
+#ifndef APP_NAME
+#define APP_NAME "TEMPLATE"
+#endif
+#ifndef APP_SPLASH_RGB
+#define APP_SPLASH_RGB RGB(242, 120, 72)   /* the name on the splash screen */
+#endif
+#ifndef APP_VERSION
+#define APP_VERSION "DEV"
+#endif
+#ifndef APP_BLOCK
+#define APP_BLOCK 256u
+#endif
+#define HALF_FRAMES APP_BLOCK     /* the audio half, as felucca-bsp's usb.c expects it */
 
 #define FELUCCA_OTA 1             /* M-UPGRADE update entry: keeps the web installer working */
-#ifndef OM_CDC
-#define OM_CDC 0                  /* USB serial console off: one plain MIDI interface */
+#ifndef FM1B_CDC
+#define FM1B_CDC 0
 #endif
-#define FELUCCA_CDC OM_CDC
-#ifndef OM_UAC
-#define OM_UAC 1                  /* USB audio input: the master output, recordable over the cable */
+#define FELUCCA_CDC FM1B_CDC
+#ifndef FM1B_UAC
+#define FM1B_UAC 0
 #endif
-#define FELUCCA_UAC OM_UAC
+#define FELUCCA_UAC FM1B_UAC
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "FM-1_800"     /* package identity (tools/build.py) */
+#define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
 #include "usb.c"
-#ifndef OM_TRS
-#define OM_TRS 1                  /* MIDI IN on the TRS jack */
+#ifndef FM1B_TRS
+#define FM1B_TRS 1
 #endif
-#if OM_TRS
+#if FM1B_TRS
 #include "midi_uart.c"
 #endif
 
@@ -123,10 +150,9 @@ static void ota_commit(const uint8_t *parm)
     fm1_enter_update(parm);
 }
 
-#include "app/app.h"
-#define ANN_NAME "FoMni-1 " OM_VERSION
-#define ANN_DATA OM_POOL
-#include "ann_words.h"            /* the link to FoMni's words file (tools/gen_words.py, from firmware/words.tsv) */
+#define ANN_NAME APP_NAME " " APP_VERSION
+#define ANN_DATA PLAT_POOL
+#include "ann_words.h"            /* the link to the app's words file (tools/gen_words.py, from the app's words.tsv) */
 #include "announce.c"             /* the screen as text for a screen reader (fm1-reader) */
 static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room (nobody reading), not sent */
 {
@@ -134,8 +160,7 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
         return -1;
     return ota_wire_send(p, n);
 }
-#include "app/panel.c"
-#include "app/plat_fm1.c"
-#include "app/project.c"
-#include "app/ui.c"
-#include "app/main_fm1.c"
+#include "panel.c"
+#include "plat_fm1.c"
+#include "app.c"
+#include "main_fm1.c"

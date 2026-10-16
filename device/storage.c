@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
- * X0X / OMNI: object map changed (see below). */
+ * Changed for X0X and fm1-base: the object map is the app's (see below). */
 /* Persistent storage on the SPI NOR.
  *
  * Every object has an A/B sector pair. A save goes to the copy that is not
@@ -18,9 +18,8 @@
 #define ST_PAYLOAD_OFF 256u
 #define ST_PAYLOAD_MAX (ST_SECTOR - ST_PAYLOAD_OFF)
 
-/* flash map, OMNI (plat.h OBJ_*): the project at 0xFC000 (Felucca's FL_GLOB), the panel calibration at
- * 0xDC000 (Felucca's user-preset area). Nothing above 0xDFFFF: 0xE0000.. is the update loader's
- * staging area. The magic is X0X's, so a project is told apart by its own magic (project.c). */
+/* flash map: the app's (app.h APP_STORE_MAP, an offset per object, plat.h). Nothing between 0xE0000 and 0xFBFFF:
+ * that is the update loader's staging area. The magic is X0X's; an app tells its own objects apart by its own magic. */
 typedef struct {
     uint32_t magic;
     uint16_t type, slot;
@@ -49,7 +48,8 @@ static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per
 
 static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1) */
 {
-    return (obj == OBJ_PANEL ? 0xDC000u : 0xFC000u) + copy * ST_SECTOR;
+    static const uint32_t map[OBJ_NOBJ] = APP_STORE_MAP;
+    return map[obj] + copy * ST_SECTOR;
 }
 
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));

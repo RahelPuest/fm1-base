@@ -2,12 +2,18 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
-"""Build OMNI (built on Felucca, as X0X is): the app, the update loader and an installable .fwsc package.
+"""Build an fm1-base firmware: the app, the update loader (felucca-bsp's) and an installable .fwsc package.
 
-  tools/build.py [--release X.Y[-suffix]]
+  tools/build.py APP_DIR [--release X.Y[.Z][-suffix]]
 
-Outputs in build/: omni.bin (app), loader/ota.bin (update loader, Felucca's, unchanged),
-omni.fwsc (package). See BUILDING.md for the toolchain and the SDK.
+APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
+  name = "TEMPLATE"          the build's file names (lower case)
+  id_prefix = "FM-1_0"       package identity: dev builds are the prefix + "00", releases the prefix + XXYYZZ
+  usb_manufacturer = "..."   the USB names (felucca-bsp FELUCCA_USB_MANUFACTURER / FELUCCA_USB_PRODUCT)
+  usb_product = "..."
+  o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR
+  words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
+Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -23,11 +29,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1]
-FW = SRC / "firmware"
-OUT = SRC / "build"
-GEN = OUT / "gen"
-LDR = OUT / "loader"
+SRC = Path(__file__).resolve().parents[1]        # fm1-base
+BSP = SRC / "bsp"                                 # felucca-bsp (git submodule)
+APP = OUT = GEN = LDR = ROOT = None               # set by main() from APP_DIR
+CONF = {}
 sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
 import lz4blk  # noqa: E402
@@ -41,8 +46,6 @@ CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-fu
 # the AC79's single-precision FPU (the SDK's own flags); no fused multiply-add, so the host
 # build (-ffp-contract=off) computes the same samples
 FPU = ["-mcpu=r3", "-mfprev1", "-ffp-contract=off"]
-# the instrument: a separate unit at -O2
-O2_UNITS = ["dsp/omni.c"]
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} )+)\s*\t(.*)$")
 
 # SDK files of AC79NN_SDK_V1.2.1_2023-12-13 (the tested version)
@@ -52,8 +55,28 @@ SDK_SHA256 = {
     "cfg/eq_cfg_hw.bin": "41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d",
 }
 
-PRODUCT = "FM-1_800"                # package identity; release builds are FM-1_8XXYYZZ (see main)
-VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/ui.c)
+PRODUCT = None                      # package identity (fm1.toml id_prefix; see main)
+VERSION = None                      # APP_VERSION for release builds (default: "DEV", device/unity.c)
+
+
+def read_conf(path):
+    """fm1.toml: key = "string" | number | ["string", ...], # comments (the little TOML a firmware needs)"""
+    conf = {}
+    for no, line in enumerate(path.read_text().splitlines(), 1):
+        line = re.sub(r"\s+#.*$", "", line).strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)", line)
+        if not m:
+            raise SystemExit(f"{path}:{no}: not key = value")
+        v = m.group(2)
+        if v.startswith("["):
+            conf[m.group(1)] = re.findall(r'"([^"]*)"', v)
+        elif v.startswith('"'):
+            conf[m.group(1)] = v.strip('"')
+        else:
+            conf[m.group(1)] = int(v, 0)
+    return conf
 
 
 def toolchain():
@@ -85,12 +108,12 @@ def _builder_start():
     global _BUILDER
     if _BUILDER:
         return _BUILDER
-    name = "jieli-" + hashlib.sha1(str(SRC).encode()).hexdigest()[:10]
+    name = "jieli-" + hashlib.sha1(str(ROOT).encode()).hexdigest()[:10]
     st = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True)
     if st.stdout.strip() != "true":
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
         r = subprocess.run(["docker", "run", "-d", "--rm", "--name", name, "--platform", "linux/amd64",
-                            "-v", f"{SRC}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
+                            "-v", f"{ROOT}:/work", "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work",
                             DOCKER_IMAGE, "sh", "-c", "sleep 3600"], capture_output=True, text=True)
         if r.returncode:
             sys.stderr.write(r.stderr)
@@ -102,15 +125,15 @@ def _builder_start():
 
 
 def tc(tool, *args):
-    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd SRC; paths relative to SRC"""
-    rel = [str(Path(a).resolve().relative_to(SRC)) if isinstance(a, Path) else a for a in args]
+    """run a toolchain binary (pi32v2/bin/..., common/bin/...) with cwd ROOT; paths relative to ROOT"""
+    rel = [str(Path(a).resolve().relative_to(ROOT)) if isinstance(a, Path) else a for a in args]
     if tool == "cc":                # the toolchain's cc wrapper needs python3; call clang directly
         tool, rel = "pi32v2/bin/clang", ["-target", "pi32v2", *rel]
     if use_docker():
         cmd = ["docker", "exec", "-w", "/work", builder(), f"/opt/jieli/{tool}", *rel]
     else:
         cmd = [str(toolchain() / tool), *rel]
-    r = subprocess.run(cmd, cwd=SRC, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stdout + r.stderr)
         raise SystemExit(f"build: {tool} failed")
@@ -121,16 +144,16 @@ def tc(tool, *args):
 
 def tc_all(*cmds):
     # at most 4 at once: a podman machine drops concurrent container connections (ssh EOF)
-    with ThreadPoolExecutor(min(len(cmds), int(os.environ.get("OM_JOBS", "4")))) as ex:
+    with ThreadPoolExecutor(min(len(cmds), int(os.environ.get("FM1B_JOBS", "4")))) as ex:
         return list(ex.map(lambda c: tc(*c), cmds))
 
 
 def generate():
-    """generated headers: the font (Felucca's), the screen reader's words link (fm1-reader)"""
+    """generated headers: the fonts, the screen reader's words link (fm1-reader)"""
     GEN.mkdir(parents=True, exist_ok=True)
     tools = SRC / "tools"
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
-              [tools / "gen_words.py", SRC / "firmware" / "words.tsv", SRC / "web" / "words", GEN / "ann_words.h"]]:
+              [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True)
         sys.stdout.write(r.stdout)
         if r.returncode:
@@ -171,8 +194,8 @@ def ldr_wrap(image):
 
 def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
-    src = FW / "loader"
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src"]
+    src = BSP / "loader"
+    flags = [*CFLAGS, *inc(BSP / "chip", BSP / "boards" / "fm1")]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))
     elf = LDR / "loader.elf"
@@ -200,31 +223,38 @@ def build_loader():
 
 # ---- app
 
+def inc(*dirs):
+    return [f"-I{Path(d).resolve().relative_to(ROOT)}" for d in dirs]
+
+
 def build_app():
-    flags = [*CFLAGS, *FPU, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
-    for flag in ("OM_CDC",):
-        v = os.environ.get(flag)    # unset: the default in firmware/src/main.c
+    flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN)]
+    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_TRS"):
+        v = os.environ.get(flag)    # unset: the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
     flags.append(f'-DFELUCCA_ID="{PRODUCT}"')
+    for key, macro in (("usb_manufacturer", "FELUCCA_USB_MANUFACTURER"), ("usb_product", "FELUCCA_USB_PRODUCT")):
+        if CONF.get(key):
+            flags.append(f'-D{macro}="{CONF[key]}"')
     if VERSION:
-        flags.append(f'-DOM_VERSION="{VERSION}"')
+        flags.append(f'-DAPP_VERSION="{VERSION}"')
     o2 = [f if f != "-Os" else "-O2" for f in flags]
-    units = [("cc", "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
-             ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
-             ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-             ("cc", *flags, "-c", FW / "src" / "main.c", "-o", OUT / "main.o")]
-    objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "main.o"]
+    units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
+             ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
+             ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
+             ("cc", *flags, "-c", SRC / "device" / "unity.c", "-o", OUT / "unity.o")]
+    objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
     (OUT / "o2").mkdir(parents=True, exist_ok=True)
-    for u in O2_UNITS:
-        o = OUT / "o2" / (u.replace("/", "_")[:-2] + ".o")
-        units.append(("cc", *o2, "-c", FW / "src" / u, "-o", o))
+    for u in CONF.get("o2", []):
+        o = OUT / "o2" / (u.replace("/", "_").rsplit(".", 1)[0] + ".o")
+        units.append(("cc", *o2, "-c", APP / u, "-o", o))
         objs.append(o)
     tc_all(*units)
-    elf = OUT / "omni.elf"
+    elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
     # mono reference paths for the host tests that the firmware no longer calls
-    tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", FW / "app.ld", *objs, "-o", elf)
+    tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", SRC / "device" / "app.ld", *objs, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
@@ -233,7 +263,7 @@ def build_app():
                                ("common/bin/objdump", "-t", elf),
                                ("common/bin/objdump", "-d", elf),
                                ("common/bin/objdump", "-d", "-j", ".ram_text", elf))
-    (OUT / "omni.dis").write_text(dis)
+    (OUT / (NAME + ".dis")).write_text(dis)
 
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
@@ -250,7 +280,7 @@ def build_app():
             img += b"\xff" * (load - APP_XIP - len(img))
             img += blob
     img += b"\xff" * (-len(img) % 4)
-    (OUT / "omni.bin").write_bytes(img)
+    (OUT / (NAME + ".bin")).write_bytes(img)
     return bytes(img), syms, dis, rt
 
 
@@ -296,7 +326,8 @@ def check(img, syms, dis, rt):
     return errors, notes
 
 
-# Every hardware register access lives in hal/. In src/ and loader/ (comments stripped):
+# Every hardware register access lives in felucca-bsp's chip/ and boards/. In device/, include/ and the app
+# (comments stripped):
 #  - no volatile pointer cast, except of a C object's address (`*(volatile T *)&x`: a read-once
 #    of a RAM flag shared with an ISR, e.g. usb.c ota_wire_send);
 #  - no literal in a register or reserved window (core SFRs 0x10000-0x13FFF, SFC 0x40000-0x43FFF,
@@ -316,7 +347,7 @@ def mmio_check():
         s = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), s, flags=re.S)
         return re.sub(r"//[^\n]*", "", s)
     defs = {}
-    for h in sorted((FW / "hal").glob("*.h")):
+    for h in sorted([*(BSP / "chip").glob("*.h"), *(BSP / "boards" / "fm1").glob("*.h")]):
         for m in re.finditer(r"^#define\s+(\w+)(?:\([^)]*\))?\s+(.*)$", strip(h.read_text()), re.M):
             defs[m.group(1)] = m.group(2)
     regs = {n for n, b in defs.items() if re.search(r"\bvolatile\b", b)}
@@ -326,37 +357,49 @@ def mmio_check():
             break
         regs |= more
     errors = []
-    for f in sorted([*(FW / "src").rglob("*.[ch]"), *(FW / "loader").glob("*.c")]):
+    files = [*(SRC / "device").glob("*.[ch]"), *(SRC / "include").glob("*.h"),
+             *[f for f in APP.rglob("*.[ch]") if "build" not in f.relative_to(APP).parts]]
+    for f in sorted(files):
         for no, ln in enumerate(strip(f.read_text()).splitlines(), 1):
-            where = f"{f.relative_to(FW)}:{no}"
+            where = f"{f.relative_to(ROOT)}:{no}"
             for rx, what in ((MMIO_LIT, "register/window address"), (MMIO_CAST, "volatile pointer cast"),
                              (MMIO_ASM, "inline asm")):
                 m = rx.search(ln)
                 if m:
-                    errors.append(f"{where}: {what} outside hal/ ({m.group(0).strip()}); add a hal/ helper")
+                    errors.append(f"{where}: {what} outside the BSP ({m.group(0).strip()}); add a BSP helper")
             used = set(re.findall(r"\b[A-Z_][A-Z0-9_]*\b", ln)) & regs
             if used:
-                errors.append(f"{where}: HAL register macro {sorted(used)[0]} outside hal/; use a hal/ helper")
+                errors.append(f"{where}: BSP register macro {sorted(used)[0]} outside the BSP; use a BSP helper")
     return errors
 
 
 def main():
-    global PRODUCT, VERSION
+    global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME
     ap = argparse.ArgumentParser()
-    ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity FM-1_8XXYYZZ, version string X.Y[.Z]")
+    ap.add_argument("app", type=Path, help="the app's directory (with fm1.toml)")
+    ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
-    name = "omni.fwsc"
+    APP = a.app.resolve()
+    CONF = read_conf(APP / "fm1.toml")
+    NAME = CONF.get("name", APP.name).lower()
+    OUT = APP / "build"
+    GEN, LDR = OUT / "gen", OUT / "loader"
+    ROOT = Path(os.path.commonpath([SRC, APP]))
+    prefix = CONF.get("id_prefix", "FM-1_0")
+    if not re.fullmatch(r"FM-1_\d+", prefix):
+        raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
+    PRODUCT = prefix + "00"
+    name = NAME + ".fwsc"
     if a.release:
-        # identity FM-1_8 + major, minor, patch as two digits each (0.1 -> FM-1_8000100): FM-1 is the
-        # model the update tools match on; the number is ours (X0X is FM-1_9...). Digits only after the
-        # underscore, as the tools parse it.
+        # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
+        # model the update tools match on; the digits after the underscore are the firmware's.
         m = re.fullmatch(r"(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?(-[A-Za-z0-9]+)?", a.release)
         if not m:
             raise SystemExit(f"--release {a.release}: use X.Y[.Z][-suffix], up to two digits each")
-        PRODUCT = "FM-1_8%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
+        PRODUCT = prefix + "%02d%02d%02d" % (int(m[1]), int(m[2]), int(m[3] or 0))
         VERSION = a.release.upper() if "BETA" in a.release.upper() else a.release.upper() + " BETA"
-        name = f"omni-{a.release}.fwsc"
+        name = f"{NAME}-{a.release}.fwsc"
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
@@ -371,7 +414,7 @@ def main():
     hal_err = mmio_check()
     errors += hal_err
     if not hal_err:
-        notes.append("register access: hal/ only (src/, loader/ clean)")
+        notes.append("register access: felucca-bsp only (device/, include/ and the app clean)")
     for n in notes:
         print("  ok   ", n)
     for e in errors:
@@ -380,7 +423,7 @@ def main():
         raise SystemExit("build: checks failed")
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
     (OUT / name).write_bytes(pkg)
-    print(f"app      {OUT / 'omni.bin'}  {len(img)} B")
+    print(f"app      {OUT / (NAME + '.bin')}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
     return 0

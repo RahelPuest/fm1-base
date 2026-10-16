@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
-/* OMNI platform on the FM-1: plat.h over Felucca's HAL, panel map, USB rings and storage.
- * Part of the unity build (omni.c), after the HAL, usb.c, storage.c and panel.c. */
+/* fm1-base on the FM-1: plat.h over felucca-bsp's chip and board layers, the panel map, the USB rings and storage.
+ * Part of the unity build (unity.c), after usb.c, storage.c and panel.c. */
 
 uint32_t plat_ms(void) { return fm1_ms; }
 
@@ -40,8 +40,7 @@ static void led_pos_init(void)
                     led_pos[id] = (uint8_t)((p << 3) | r);
     }
 }
-/* Glow: every button not lit is lit dim, on one scan frame in GLOW_DIV (the HAL's fm1_led_dim) */
-#define GLOW_DIV 4u
+/* Glow: every button not lit is lit dim (felucca-bsp's fm1_led_dim: a short pulse on every scan frame) */
 static uint8_t glow_on = 1;
 void plat_glow(int on) { glow_on = (uint8_t)(on != 0); }
 /* PLAY has two LEDs: its red at the button's own position, a green at the keyless matrix position
@@ -69,7 +68,6 @@ void plat_leds(uint32_t buttons, uint32_t keys)
         fm1_led[c] = nl[c];
         fm1_led_dim[c] = dl[c];
     }
-    fm1_led_dim_div = glow_on ? GLOW_DIV : 0u;
 }
 
 /* MIDI: Felucca's rings carry 4-byte USB-MIDI event packets, byte 0 = cable / CIN */
@@ -83,7 +81,6 @@ int plat_midi_in(uint32_t *pkt)
 }
 void plat_midi_out(uint32_t pkt) { midi_out_event(pkt); }
 /* the engine's MIDI out (from the render): a USB-MIDI packet, cable 0, CIN = the status's high nibble */
-void om_midi_out(uint32_t st, uint32_t d1, uint32_t d2) { plat_midi_out(st >> 4 | st << 8 | d1 << 16 | d2 << 24); }
 
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_save(uint32_t obj, const void *src, uint32_t len) { return flash_ok ? st_save(obj, src, len) : -9; }
