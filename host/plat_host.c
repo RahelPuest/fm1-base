@@ -513,6 +513,11 @@ static int expect_out(const char *port, uint32_t pkt)   /* this message went out
 static int expect(const char *what, const char *val)
 {
     int got;
+#ifdef APP_HOST_EXPECT
+    if (app_expect(what, &got))                   /* the app's own state (app.h), first: it may count its own way */
+        ;
+    else
+#endif
     if (!strcmp(what, "store_writes"))
         got = (int)store_writes;
     else if (!strcmp(what, "clocks_out"))
@@ -521,10 +526,6 @@ static int expect(const char *what, const char *val)
         got = (int)midi_out_count;
     else if (!strcmp(what, "ble"))
         got = ble_state;
-#ifdef APP_HOST_EXPECT
-    else if (app_expect(what, &got))              /* the app's own state (app.h) */
-        ;
-#endif
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
         double db = 20.0 * log10(peak_out > 1e-9f ? peak_out : 1e-9f);
         int bad = what[8] == 'm' && what[9] == 'a' ? db > atof(val) : db < atof(val);
