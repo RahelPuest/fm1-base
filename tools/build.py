@@ -6,6 +6,8 @@
 
   tools/build.py APP_DIR [--release X.Y[.Z][-suffix]]
   tools/build.py APP_DIR --host        the host simulator instead: APP_DIR/build/host/NAME_host (cc, no toolchain)
+  tools/build.py APP_DIR --web         the browser emulator instead: APP_DIR/build/emu/ (emcc); the page is the
+                                       simulator alone (panel, screen, sound, screen reader), for a site to link or frame
 
 APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   name = "TEMPLATE"          the build's file names (lower case)
@@ -392,6 +394,41 @@ def build_host():
     return 0
 
 
+def build_web():
+    """the host simulator in WebAssembly (web/emu/emu_web.c) and its page, in OUT/emu; the screen reader's voice
+    (eSpeak NG, GPL: a separate program the page loads) from an fm1-reader checkout next to fm1-base, if there"""
+    import shutil
+    emu = OUT / "emu"
+    emu.mkdir(parents=True, exist_ok=True)
+    cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", APP, GEN)),
+           "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
+           "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *(str(APP / u) for u in CONF.get("o2", []))]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    sys.stderr.write(r.stderr)
+    if r.returncode:
+        raise SystemExit("build: the emulator did not compile (emcc: Emscripten)")
+    page = (SRC / "web" / "emu" / "index.html").read_text()
+    page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
+    (emu / "index.html").write_text(page)
+    shutil.copy(SRC / "web" / "emu" / "worklet.js", emu / "worklet.js")
+    found = [d for d in (SRC.parent / "fm1-reader" / "web", SRC.parent / "fm1-parent" / "fm1-reader" / "web") if d.is_dir()]
+    reader = Path(os.environ.get("FM1_READER", found[0] if found else SRC.parent / "fm1-reader" / "web"))
+    if (reader / "words.js").exists() and (reader / "espeak" / "espeak.wasm").exists():
+        (emu / "reader" / "espeak").mkdir(parents=True, exist_ok=True)
+        for f in ("words.js", "tts.js", "tts_worker.js"):
+            shutil.copy(reader / f, emu / "reader" / f)
+        for f in ("espeak.js", "espeak.wasm", "LICENSE", "README.md"):
+            shutil.copy(reader / "espeak" / f, emu / "reader" / "espeak" / f)
+        (emu / "reader" / "FROM.txt").write_text(f"From fm1-reader (https://github.com/charlesvestal/fm1-reader) web/, "
+                                                 f"copied by fm1-base's tools/build.py --web.\n")
+    else:
+        print(f"emu: no fm1-reader at {reader}: the screen is read as plain text, without its voice (set FM1_READER)")
+    print(f"emu      {emu}  ({(emu / 'app.wasm').stat().st_size} B wasm)")
+    return 0
+
+
 def main():
     global PRODUCT, VERSION, APP, OUT, GEN, LDR, ROOT, CONF, NAME
     ap = argparse.ArgumentParser()
@@ -399,6 +436,7 @@ def main():
     ap.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity id_prefix + XXYYZZ, version string X.Y[.Z]")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--host", action="store_true", help="build the host simulator instead of the firmware")
+    ap.add_argument("--web", action="store_true", help="build the browser emulator instead of the firmware")
     a = ap.parse_args()
     APP = a.app.resolve()
     CONF = read_conf(APP / "fm1.toml")
@@ -411,9 +449,9 @@ def main():
         raise SystemExit(f"fm1.toml id_prefix {prefix!r}: FM-1_ and digits only (the update tools parse it)")
     PRODUCT = prefix + "00"
     name = NAME + ".fwsc"
-    if a.host:
+    if a.host or a.web:
         generate()
-        return build_host()
+        return build_host() if a.host else build_web()
     if a.release:
         # identity: the prefix + major, minor, patch as two digits each (0.1 -> FM-1_0000100): FM-1 is the
         # model the update tools match on; the digits after the underscore are the firmware's.

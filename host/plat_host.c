@@ -120,11 +120,22 @@ void plat_midi_out(uint32_t pkt)
 
 /* flash: one buffer per object, kept across a simulated reboot */
 static uint8_t store[OBJ_NOBJ][PLAT_STORE_MAX];
-static int store_len[OBJ_NOBJ];           /* -1 = nothing saved (store_init) */
+static int store_len[OBJ_NOBJ];           /* -1 = nothing saved (store_ready) */
 static uint32_t store_writes;
+static void store_ready(void)             /* the flash starts empty: once, on first use (a "reboot" keeps it) */
+{
+    static int done;
+    uint32_t i;
+    if (done)
+        return;
+    done = 1;
+    for (i = 0; i < OBJ_NOBJ; i++)
+        store_len[i] = -1;
+}
 int plat_store_load(uint32_t obj, void *dst, uint32_t max)
 {
     int n;
+    store_ready();
     if (obj >= OBJ_NOBJ || (n = store_len[obj]) < 0)
         return -1;
     if ((uint32_t)n > max)
@@ -134,6 +145,7 @@ int plat_store_load(uint32_t obj, void *dst, uint32_t max)
 }
 int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 {
+    store_ready();
     if (obj >= OBJ_NOBJ || len > PLAT_STORE_MAX)
         return -1;
     memcpy(store[obj], src, len);
@@ -438,9 +450,6 @@ int main(int argc, char **argv)
     char line[512], out[400];
     const char *dir = argc > 2 ? argv[2] : ".";
     int lineno = 0, fails = 0;
-    for (lineno = 0; lineno < OBJ_NOBJ; lineno++)
-        store_len[lineno] = -1;
-    lineno = 0;
     if (argc < 2) {
         fprintf(stderr, "usage: %s SCRIPT [OUTDIR]\n", argv[0]);
         return 2;

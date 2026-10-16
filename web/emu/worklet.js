@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Charles Vestal
-// OMNI in an AudioWorklet: omni.wasm is the whole FM-1 app (web/emu/omni_web.c). Each render
+// An fm1-base app in an AudioWorklet: app.wasm is the whole FM-1 app (web/emu/emu_web.c). Each render
 // quantum asks it for 128 frames, which runs the device's clock forward; between quanta the page's
 // input goes in and, about 30 times a second, the screen, the lights, any saved objects and what the
 // firmware said to a screen reader (fm1-reader's SysEx frames) go out.
 
 const clock = globalThis.performance ? () => globalThis.performance.now() : () => Date.now();
 
-class Omni extends AudioWorkletProcessor {
+class Fm1 extends AudioWorkletProcessor {
   constructor() {
     super();
     this.ex = null;
@@ -114,4 +114,4 @@ class Omni extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("omni", Omni);
+registerProcessor("fm1", Fm1);

@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal */
-/* OMNI in the browser: the host simulator (host/omni_host.c: the whole app, UI and instrument,
- * against a simulated FM-1) compiled to WebAssembly and run in an AudioWorklet (from X0X's). The worklet asks
+/* An fm1-base app in the browser: the host simulator (host/plat_host.c: the whole app, UI and sound, against a
+ * simulated FM-1) compiled to WebAssembly and run in an AudioWorklet (from X0X's, by way of FoMni-1's). The worklet asks
  * for audio; producing it advances the device's clock one millisecond at a time, which runs the
- * engine every 256 samples (the I2S half buffer) and the UI every 16 ms, as on the FM-1. The page
+ * app's render every APP_BLOCK samples (the I2S half buffer) and the UI every 16 ms, as on the FM-1. The page
  * sends input, and reads the screen, the lights and the saved objects back through these exports.
  *
- *   web/emu/build.sh   ->  build/emu/omni.wasm (+ the page) */
+ *   tools/build.py APP_DIR --web   ->  APP_DIR/build/emu/app.wasm (+ the page) */
 #include <stdint.h>
 
 static void web_audio(const int32_t *blk, uint32_t n);
-#include "../../host/omni_host.c"
+#include "plat_host.c"
 
 #undef __attribute__
 
@@ -82,10 +82,11 @@ __attribute__((used, visibility("default"))) uint32_t web_now(void) { return now
 __attribute__((used, visibility("default"))) uint32_t web_cpu(void) { return cpu_pct; }
 
 /* saved objects: the page keeps them (localStorage) and gives them back before boot */
-__attribute__((used, visibility("default"))) uint8_t *web_store(uint32_t obj) { return obj < OBJ_NOBJ ? store[obj] : 0; }
-__attribute__((used, visibility("default"))) int web_store_len(uint32_t obj) { return obj < OBJ_NOBJ ? store_len[obj] : -1; }
+__attribute__((used, visibility("default"))) uint8_t *web_store(uint32_t obj) { store_ready(); return obj < OBJ_NOBJ ? store[obj] : 0; }
+__attribute__((used, visibility("default"))) int web_store_len(uint32_t obj) { store_ready(); return obj < OBJ_NOBJ ? store_len[obj] : -1; }
 __attribute__((used, visibility("default"))) void web_store_set_len(uint32_t obj, int n)
 {
+    store_ready();
     if (obj < OBJ_NOBJ)
         store_len[obj] = n < 0 ? -1 : n > (int)PLAT_STORE_MAX ? (int)PLAT_STORE_MAX : n;
 }
