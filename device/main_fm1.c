@@ -43,6 +43,9 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
             } else {
                 app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
             }
+#if FELUCCA_UAC_OUT
+            uac_play(o + 2u * k, REND_FRAMES, master_pos * master_pos >> 12);   /* the computer's audio, at MASTER */
+#endif
 #if FELUCCA_UAC
             uac_tap(o + 2u * k, REND_FRAMES);       /* the USB audio input: the same master output */
 #endif

@@ -310,7 +310,7 @@ def build_app():
                                  *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
     if BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
-    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_TRS"):
+    for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_UAC_OUT", "FM1B_TRS"):
         v = os.environ.get(flag)    # unset: the app's (app.h) or the platform's default (device/unity.c)
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")

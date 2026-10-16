@@ -16,6 +16,7 @@
  *   FM1B_CDC 0              USB serial console (a second USB function)
  *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
+ *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app, at MASTER
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out) */
@@ -70,6 +71,10 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_UAC_48K 0            /* 48 kHz too: needs uac_fir.h, the resampler's filter (not in fm1-base yet) */
 #endif
 #define FELUCCA_UAC_48K FM1B_UAC_48K
+#ifndef FM1B_UAC_OUT
+#define FM1B_UAC_OUT 1            /* the computer plays through the FM-1 (USB audio output) */
+#endif
+#define FELUCCA_UAC_OUT FM1B_UAC_OUT
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
