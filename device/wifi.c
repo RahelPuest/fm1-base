@@ -242,11 +242,6 @@ typedef struct { char ssid[33]; int8_t rssi; uint8_t secured; } wf_scan_t;
 static wf_scan_t wf_scan_list[WF_SCAN_N];
 static int wf_scan_n;
 static uint32_t wifi_scans;                       /* scans collected (plat_wifi_scans) */
-/* a deaf receiver: after a start (sometimes the first after flashing) or a drop, the radio can stop hearing anything,
- * every scan empty, until WiFi is turned off and on (seen on the device, 2026-10-16). Three empty scans in a row
- * while not connected restart it (at most once a minute: a place with no networks at all costs a restart a minute) */
-static uint8_t wf_deaf;
-static uint32_t wf_restart_at, wf_restarted;
 
 /* after WIFI_EVENT_STA_SCAN_COMPLETED (a scan of ours, or a join's): the results, strongest first, each network
  * once (the strongest of its access points) */
@@ -280,17 +275,11 @@ static void wifi_scan_collect(void)
     if (r)
         wifi_clear_scan_result();
     wifi_scans++;
-    wf_deaf = n == 0u && wifi_st != WIFI_CONNECTED ? (uint8_t)(wf_deaf + 1u) : 0u;
 }
 
 /* the main loop's turn: timers, every task that can run, then what the events left to do */
-void plat_wifi_on(int on);
 static void wifi_poll(void)
 {
-    if (wf_restart_at && wifi_st == WIFI_OFF && (int32_t)(shim_ms() - wf_restart_at) >= 0) {
-        wf_restart_at = 0;
-        plat_wifi_on(1);                          /* the restart's second half */
-    }
     if (wifi_st == WIFI_OFF)
         return;
     shim_timers();
@@ -309,13 +298,6 @@ static void wifi_poll(void)
     if (wifi_scan_done) {
         wifi_scan_done = 0;
         wifi_scan_collect();
-    }
-    if (wf_deaf >= 3u && (!wf_restarted || shim_ms() - wf_restarted > 60000u)) {
-        wf_deaf = 0;
-        wf_restarted = shim_ms();
-        shim_log("WiFi: hears nothing, restarting");
-        plat_wifi_on(0);
-        wf_restart_at = shim_ms() + 1500u;        /* on again in a moment (wifi_poll) */
     }
 }
 
@@ -340,7 +322,6 @@ void plat_wifi_on(int on)
         if (wifi_on())
             shim_log("WiFi: wifi_on failed");
     } else if (!on && wifi_st != WIFI_OFF) {
-        wf_restart_at = 0;
         wifi_st = WIFI_OFF;
         wifi_ip = 0;
         if (wifi_powered) {
