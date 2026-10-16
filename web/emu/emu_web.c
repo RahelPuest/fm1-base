@@ -67,7 +67,29 @@ __attribute__((used, visibility("default"))) void web_sysex(uint32_t n) { ann_fr
 
 __attribute__((used, visibility("default"))) void web_boot(void) { boot(); }
 __attribute__((used, visibility("default"))) void web_buttons(uint32_t m) { held_btn = m; }
-__attribute__((used, visibility("default"))) void web_keys(uint32_t m) { held_keys = m; }
+__attribute__((used, visibility("default"))) void web_keys(uint32_t m)
+{
+#ifdef APP_KEY_SENSE
+    uint32_t k, ch = m ^ held_keys;       /* each key landing at velocity 100 (the app makes its readings) */
+    for (k = 0; k < NKEYS; k++)
+        if (ch >> k & 1u)
+            app_host_key(k, m >> k & 1u ? 100u : 0u, 0);
+#endif
+    held_keys = m;
+}
+/* one key at velocity vel 1..127 (0 = up), pressed press 0..1000 more (APP_KEY_SENSE; else just down or up) */
+__attribute__((used, visibility("default"))) void web_key(uint32_t k, uint32_t vel, uint32_t press)
+{
+    if (k >= NKEYS)
+        return;
+#ifdef APP_KEY_SENSE
+    app_host_key(k, vel > 127u ? 127u : vel, (press > 1000u ? 1000u : press) / 10u);
+#endif
+    if (vel)
+        held_keys |= 1u << k;
+    else
+        held_keys &= ~(1u << k);
+}
 __attribute__((used, visibility("default"))) void web_enc(int role, int32_t n)
 {
     if (role >= 0 && role < NE)
@@ -76,6 +98,20 @@ __attribute__((used, visibility("default"))) void web_enc(int role, int32_t n)
 __attribute__((used, visibility("default"))) void web_master(uint32_t v) { master = v > 4096u ? 4096u : v; }
 __attribute__((used, visibility("default"))) uint32_t web_lit_buttons(void) { return lit_btn; }
 __attribute__((used, visibility("default"))) uint32_t web_lit_keys(void) { return lit_keys; }
+__attribute__((used, visibility("default"))) uint32_t web_dim_buttons(void) { return dim_btn; }
+__attribute__((used, visibility("default"))) uint32_t web_dim_keys(void) { return dim_keys; }
+
+/* MIDI: in from the page (port PORT_*: a Web MIDI input is USB), out as the app sent it (USB-MIDI packets) */
+__attribute__((used, visibility("default"))) void web_midi_in(uint32_t port, uint32_t pkt)
+{
+    if (port < NPORTS && mi_w - mi_r < MQ) {
+        min_q[mi_w % MQ] = pkt;
+        min_port[mi_w++ % MQ] = port;
+    }
+}
+__attribute__((used, visibility("default"))) uint32_t web_out_n(void) { return n_out; }
+__attribute__((used, visibility("default"))) uint32_t *web_out_pkts(void) { return out_pkt; }
+__attribute__((used, visibility("default"))) void web_out_clear(void) { n_out = 0; }
 __attribute__((used, visibility("default"))) uint16_t *web_fb(void) { return fb; }
 __attribute__((used, visibility("default"))) uint32_t web_blits(void) { return blits; }
 __attribute__((used, visibility("default"))) uint32_t web_now(void) { return now_ms; }
