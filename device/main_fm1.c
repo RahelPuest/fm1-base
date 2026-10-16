@@ -261,6 +261,22 @@ static int log_frame(const uint8_t *p, uint32_t n)
         log_line_send(b);
         t5_gap_max = t5_late = 0;
     }
+#if FM1B_BLE
+    {
+        extern uint32_t shim_off_max, shim_off_from;
+        const char *l = "BT irqs off max us ";
+        q = b;
+        while (*l)
+            *q++ = *l++;
+        hexs(q, shim_off_max);
+        q += 8;
+        for (l = " from "; *l;)
+            *q++ = *l++;
+        hexs(q, shim_off_from);
+        log_line_send(b);
+        shim_off_max = 0;
+    }
+#endif
     log_line_send("end");
     return 1;
 }

@@ -10,16 +10,29 @@
 uint32_t shim_ms(void) { return fm1_uptime_ms(); }   /* TIMER4: independent of the timer-5 tick */
 
 static volatile uint32_t shim_depth;
+uint32_t shim_off_max, shim_off_from;            /* the longest the stack kept interrupts off (us), and from where
+                                                  * (main_fm1.c's log reads and clears them) */
+static uint32_t shim_off_t0, shim_off_ra;
 uint32_t shim_irq_save(void)                     /* nests, unlike irq_save(): the shim calls itself */
 {
     fm1_irq_off();
+    if (shim_depth == 0) {
+        shim_off_t0 = fm1_ticks();
+        shim_off_ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    }
     return shim_depth++;
 }
 void shim_irq_restore(uint32_t f)
 {
     (void)f;
-    if (shim_depth && --shim_depth == 0)
+    if (shim_depth && --shim_depth == 0) {
+        uint32_t us = (fm1_ticks() - shim_off_t0) / FM1_TICKS_PER_US;
+        if (us > shim_off_max) {
+            shim_off_max = us;
+            shim_off_from = shim_off_ra;
+        }
         fm1_irq_on();
+    }
 }
 int shim_in_irq(void) { return 0; }
 /* every task waits: run what is due (a timer may be what they wait for) and keep the watchdog fed,
