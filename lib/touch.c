@@ -118,6 +118,7 @@ void touch_update(void)
     }
 }
 uint8_t touch_pressure(uint32_t key) { return key < NKEYS ? p_val[key] : 0; }
+int touch_down(uint32_t key) { return key < NKEYS && touch_live && sn_key[key].st == SN_DOWN && sn_key[key].dn; }
 
 void touch_poll(void)
 {

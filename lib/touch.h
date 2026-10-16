@@ -38,6 +38,7 @@ uint32_t touch_keys(void);               /* state: every key held, bit k = key k
 uint8_t touch_vel(uint32_t key);         /* state: the velocity of the key's last press, 1..127 */
 uint8_t touch_vel_contact(uint32_t key); /* a top-row key just pressed: its velocity, 0 when there is no reading */
 uint8_t touch_pressure(uint32_t key);    /* a held sensed key: how much harder it is pressed than it rests, 0..127 */
+int touch_down(uint32_t key);            /* a sensed key is seated (its pressure counts; lifting, it does not) */
 
 /* the host simulator: what a key's readings would be (host/plat_host.c "key K down VEL PRESS") */
 void app_host_key(uint32_t k, uint32_t vel, uint32_t press);
