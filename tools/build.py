@@ -22,6 +22,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   device_include = ["inc"]   include directories for the firmware only (headers the toolchain lacks)
   mmio_skip = ["dsp/lib/"]   paths whose numbers are not addresses (a library's tables): the register check skips
                              its address literals there (still checks casts, asm and register macros)
+  rom_check_skip = ["pv_log2"]   functions whose constants only look like ROM addresses (0xFFC00000..): the check
+                             that nothing calls or loads the chip ROM skips them
   vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
@@ -492,9 +494,15 @@ def check(img, syms, dis, rt):
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
         notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
+    skip_fns, fn = set(CONF.get("rom_check_skip", [])), ""
     for ln in dis.splitlines():     # nothing may call or load an address in the chip ROM
         mm = LINE.match(ln)
         if not mm:
+            m2 = re.match(r"^([A-Za-z_.$][\w.$]*):$", ln.strip())
+            if m2:
+                fn = m2.group(1)
+            continue
+        if fn in skip_fns:          # (a vendored function whose constant only looks like a ROM address)
             continue
         for v in re.findall(r"= (-?\d+) <|call -?\d+ <[^:>]*: ([0-9a-f]+) >", mm.group(3)):
             val = (int(v[0]) & 0xFFFFFFFF) if v[0] else int(v[1], 16) & 0xFFFFFFFF
