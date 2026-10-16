@@ -337,7 +337,7 @@ const char *plat_wifi_why(void) { return wifi_st == WIFI_FAILED ? wifi_why : "";
 const char *plat_wifi_ssid(void) { return wifi_ssid; }
 uint32_t plat_wifi_ip(void) { return wifi_st == WIFI_CONNECTED ? wifi_ip : 0; }
 int plat_wifi_rssi(void) { return wifi_st == WIFI_CONNECTED ? wifi_rssi : 0; }
-int plat_wifi_scan(void) { return wifi_st >= WIFI_ON && wifi_st != WIFI_FAILED ? wifi_scan_req() : -1; }
+int plat_wifi_scan(void) { return wifi_st >= WIFI_ON ? wifi_scan_req() : -1; }   /* (failed: the radio is still on) */
 int plat_wifi_found(int i, char *ssid, int *rssi, int *secured)
 {
     if (i < 0 || i >= wf_scan_n)
