@@ -172,7 +172,7 @@ static void octave_text(char *t)
 /* a screen reader that has just started listening (or asks) hears the whole screen */
 static void speak(void)
 {
-    char t[64], o[4];
+    char t[96], o[4];
     if (ann_on() && ann_where()) {
         octave_text(o);
         t[0] = 0;
@@ -180,6 +180,22 @@ static void speak(void)
         text_cat(t, o);
         text_cat(t, ". WAVE ");
         text_cat(t, WAVE_NAME[set.wave]);
+        if (midi_count) {                    /* the last MIDI message in, as the screen shows it */
+            static const char *const PORT[NPORTS] = {"USB", "BLE", "TRS"};
+            static const char HEX[] = "0123456789ABCDEF";
+            uint32_t m = midi_last, b;
+            char h[10];
+            for (b = 0; b < 3u; b++) {
+                uint32_t v = (m >> (8u + 8u * b)) & 0xFFu;
+                h[3 * b] = HEX[v >> 4];
+                h[3 * b + 1] = HEX[v & 15u];
+                h[3 * b + 2] = b < 2u ? ' ' : 0;
+            }
+            text_cat(t, ". MIDI IN ");
+            text_cat(t, midi_last_port < NPORTS ? PORT[midi_last_port] : "");
+            text_cat(t, " ");
+            text_cat(t, h);
+        }
         ann_say(t, 0, ANN_NOW);
     }
     ann_tick(plat_ms());
@@ -443,9 +459,16 @@ void app_frame(void)
         static int said_ready;
         last_pct = pct;
         last_ble = (uint32_t)(plat_ble_connected() | plat_ble_device() << 1);
-        if (plat_ble_device() == BLE_DEV_READY && !said_ready)
+        static int was;
+        int d = plat_ble_device();
+        if (d == BLE_DEV_READY && !said_ready)
             app_say("DEVICE", "CONNECTED");
-        said_ready = plat_ble_device() == BLE_DEV_READY;
+        else if (d == BLE_DEV_OFF && (was == BLE_DEV_CONNECTING || was == BLE_DEV_SEARCHING))
+            app_say("DEVICE", "FAILED");
+        else if (d == BLE_DEV_OFF && was == BLE_DEV_READY)
+            app_say("DEVICE", "LOST");
+        said_ready = d == BLE_DEV_READY;
+        was = d;
         if (now >= ui.msg_until)
             ui.msg_until = 0;
         ui.redraw = 1;
