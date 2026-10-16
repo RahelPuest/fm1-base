@@ -147,6 +147,23 @@ static const char *wifi_why = "";                 /* WIFI_FAILED: what went wron
 static int8_t wifi_rssi;
 static int wifi_try;                              /* joining the saved networks: the one being tried */
 static volatile uint8_t wifi_join_due, wifi_scan_done;
+static uint32_t wifi_retry_at;                    /* all failed: the saved networks again then (0: none) */
+
+/* a join failed (or a dropped network's rejoin): the next saved network; when all have, failed, and again in 30 s
+ * (a radio left on comes back when its network does) */
+static void wifi_next(const char *why)
+{
+    if (wifi_try + 1 < wf_nets_count()) {
+        wifi_try++;
+        wifi_join_due = 1;
+    } else {
+        wifi_st = WIFI_FAILED;
+        wifi_why = why;
+        wifi_retry_at = shim_ms() + 30000u;
+        if (!wifi_retry_at)
+            wifi_retry_at = 1;
+    }
+}
 
 static void wifi_join(const char *ssid, const char *pass)
 {
@@ -200,6 +217,8 @@ static int wifi_event_cb(void *ctx, int event)
         wifi_ip = ni.ip;
         wifi_st = WIFI_CONNECTED;
         wifi_join_due = 2;                        /* the main loop: this network to the front */
+        wifi_try = 0;                             /* (where it will be: if it drops, the others after it) */
+        wifi_retry_at = 0;
         break;
     }
     case WIFI_EVENT_STA_DISCONNECT:
@@ -209,22 +228,14 @@ static int wifi_event_cb(void *ctx, int event)
         }
         break;
     case WIFI_EVENT_STA_CONNECT_TIMEOUT_NOT_FOUND_SSID:
-        if (wifi_try + 1 < wf_nets_count()) {        /* the saved networks: the next one */
-            wifi_try++;
-            wifi_join_due = 1;
-        } else {
-            wifi_st = WIFI_FAILED;
-            wifi_why = "not found";
-        }
+        wifi_next("not found");
         break;
     case WIFI_EVENT_STA_CONNECT_ASSOCIAT_FAIL:
     case WIFI_EVENT_STA_CONNECT_ASSOCIAT_TIMEOUT:
-        wifi_st = WIFI_FAILED;
-        wifi_why = "wrong password?";
+        wifi_next("could not join");             /* (a wrong password, or a network that went) */
         break;
     case WIFI_EVENT_STA_NETWORK_STACK_DHCP_TIMEOUT:
-        wifi_st = WIFI_FAILED;
-        wifi_why = "no address";
+        wifi_next("no address");
         break;
     case WIFI_EVENT_MODULE_START_ERR:
         wifi_st = WIFI_FAILED;
@@ -286,6 +297,11 @@ static void wifi_poll(void)
     shim_run();
     radio_stuck_check();
     radio_settle(wifi_st >= WIFI_ON);
+    if (wifi_st == WIFI_FAILED && wifi_retry_at && (int32_t)(shim_ms() - wifi_retry_at) >= 0 && wf_nets_count()) {
+        wifi_retry_at = 0;                        /* the saved networks again, from the most recent */
+        wifi_try = 0;
+        wifi_join_due = 1;
+    }
     if (wifi_join_due == 1 && wifi_try < wf_nets_count()) {
         wifi_join_due = 0;
         wifi_join(wf_nets.n[wifi_try].ssid, wf_nets.n[wifi_try].pass);
@@ -360,6 +376,7 @@ int plat_wifi_join(const char *ssid, const char *pass)
     if (!pass)
         pass = i >= 0 ? wf_nets.n[i].pass : "";
     wifi_try = WF_NET_N;                             /* (by hand: no going on to the saved ones) */
+    wifi_retry_at = 0;
     wifi_join(ssid, pass);
     return 0;
 }
