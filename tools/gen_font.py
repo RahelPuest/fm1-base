@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Charles Vestal
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Render the bitmap fonts to a C header (assets/fonts/):
-  XS / S / B / M / L: Terminus 12, 16, 16 bold, 24 bold, 32 bold (BDF, SIL OFL 1.1); see SIZES. TTF fonts also work through render()
+  T / XS / S / B / M / L: Terminus 12 (T: digits and capitals), 12, 16, 16 bold, 24 bold, 32 bold (BDF, SIL OFL 1.1); see SIZES. TTF fonts also work through render()
 (anti-aliased, tabular figures via the OpenType `tnum` feature).
 
 Glyph format: per glyph an advance width, a bitmap width and an offset; the
@@ -19,27 +19,31 @@ from PIL import Image, ImageDraw, ImageFont
 FONTS = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 # (name, file, px, scale, pixel, first, last): pixel fonts are rendered without
 # anti-aliasing at their design size and enlarged by an integer factor
-# X0X: five roles, XS (grid labels, units, hints), S (body), B (headers, names, the selected
+# X0X: six roles, T (footers), XS (grid labels, units, hints), S (body), B (headers, names, the selected
 # row), M (knob values) and L (the big readout). Each set gives them a face and a pixel size,
 # chosen so the line height stays near the layout's 12 / 16 / 24 / 32. X0X_FONTSET picks one.
 # A TTF entry "file.ttf@wght=600" sets a variable font's axis.
 FONTSETS = {
-    "terminus": [("XS", "ter-u12n.bdf", 12, 1, True, 32, 126),
+    "terminus": [("T", "ter-u12n.bdf", 12, 1, True, 32, 95),
+                 ("XS", "ter-u12n.bdf", 12, 1, True, 32, 126),
                  ("S", "ter-u16n.bdf", 16, 1, True, 32, 126),
                  ("B", "ter-u16b.bdf", 16, 1, True, 32, 126),
                  ("M", "ter-u24b.bdf", 24, 1, True, 32, 95),
                  ("L", "ter-u32b.bdf", 32, 1, True, 32, 95)],
-    "barlow": [("XS", "BarlowSemiCondensed-SemiBold.ttf", 12, 1, False, 32, 126),
+    "barlow": [("T", "BarlowSemiCondensed-SemiBold.ttf", 10, 1, False, 32, 95),   # footers (from X0X)
+               ("XS", "BarlowSemiCondensed-SemiBold.ttf", 12, 1, False, 32, 126),
                ("S", "BarlowSemiCondensed-Medium.ttf", 15, 1, False, 32, 126),
                ("B", "BarlowSemiCondensed-Bold.ttf", 15, 1, False, 32, 126),
                ("M", "BarlowSemiCondensed-SemiBold.ttf", 23, 1, False, 32, 95),
                ("L", "BarlowSemiCondensed-Bold.ttf", 31, 1, False, 32, 126)],
-    "inter": [("XS", "Inter[opsz,wght].ttf@wght=600", 11, 1, False, 32, 126),
+    "inter": [("T", "Inter[opsz,wght].ttf@wght=600", 9, 1, False, 32, 95),
+              ("XS", "Inter[opsz,wght].ttf@wght=600", 11, 1, False, 32, 126),
               ("S", "Inter[opsz,wght].ttf@wght=500", 14, 1, False, 32, 126),
               ("B", "Inter[opsz,wght].ttf@wght=700", 14, 1, False, 32, 126),
               ("M", "Inter[opsz,wght].ttf@wght=650", 21, 1, False, 32, 95),
               ("L", "Inter[opsz,wght].ttf@wght=700", 29, 1, False, 32, 95)],
-    "rajdhani": [("XS", "Rajdhani-Bold.ttf", 14, 1, False, 32, 126),
+    "rajdhani": [("T", "Rajdhani-SemiBold.ttf", 12, 1, False, 32, 95),
+                 ("XS", "Rajdhani-Bold.ttf", 14, 1, False, 32, 126),
                  ("S", "Rajdhani-SemiBold.ttf", 17, 1, False, 32, 126),
                  ("B", "Rajdhani-Bold.ttf", 17, 1, False, 32, 126),
                  ("M", "Rajdhani-Bold.ttf", 26, 1, False, 32, 95),
