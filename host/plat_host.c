@@ -613,6 +613,10 @@ static int expect(const char *what, const char *val)
         got = (int)midi_out_count;
     else if (!strcmp(what, "ble"))
         got = ble_state;
+    else if (!strcmp(what, "ble_dev"))              /* the Bluetooth MIDI device: BLE_DEV_* (4 connected) */
+        got = bdev_state;
+    else if (!strcmp(what, "midi_in_usb"))          /* plat_midi_count: messages in from USB */
+        got = (int)plat_midi_count(PORT_USB, 0);
     else if (!strcmp(what, "peak_db_max") || !strcmp(what, "peak_db_min")) {
         double db = 20.0 * log10(peak_out > 1e-9f ? peak_out : 1e-9f);
         int bad = what[8] == 'm' && what[9] == 'a' ? db > atof(val) : db < atof(val);

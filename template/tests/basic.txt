@@ -91,3 +91,22 @@ release REC
 wait 1200
 said BLUETOOTH ON
 expect ble 2
+# REC: look for Bluetooth MIDI devices, connect to the one found, let it go (lib/btdev)
+tap REC
+said BLE SCANNING
+wait 700
+said DEVICE BLE MIDI
+tap REC
+said CONNECTING BLE MIDI
+wait 500
+said DEVICE CONNECTED
+expect ble_dev 4
+tap REC
+said BLE DISCONNECTED
+wait 100
+expect ble_dev 0
+unsaid LOST
+# each port's messages counted (plat_midi_count): this is the fifth from USB in this script
+midi USB 90 40 50
+wait 20
+expect midi_in_usb 5

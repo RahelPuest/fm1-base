@@ -111,7 +111,7 @@ static struct {
     uint32_t keys, btn;                  /* held at the last input */
     uint8_t vel[NKEYS], prs[NKEYS];      /* each key's last velocity, and its pressure while held */
     int32_t last_key;                    /* the key pressed last: its numbers in the header */
-    int32_t pick;                        /* Bluetooth MIDI devices: the one ALGORITHM picks while scanning */
+    uint8_t looking;                     /* Bluetooth MIDI devices: REC pressed, the scan's list up (lib/btdev) */
     uint32_t rec_t;                      /* REC went down (0: not held, or its hold already acted) */
     int32_t turns[NE];                   /* detents since boot, per encoder */
     uint32_t turned_at[NE];              /* when each was last turned: it shows lit for a moment */
@@ -238,34 +238,27 @@ static void ble_toggle(void)
     app_say("BLUETOOTH", set.ble_off ? "OFF" : "ON");
 }
 
-/* REC: a Bluetooth MIDI device (FM1B_BLE_CENTRAL): scan, then connect to the one ALGORITHM picks, then let it go */
+/* REC: a Bluetooth MIDI device (FM1B_BLE_CENTRAL, lib/btdev): look for devices, then connect to the one ALGORITHM
+ * picks, then let it go */
 static void ble_device_say(void)
 {
     char name[21];
-    if (plat_ble_found((int)ui.pick, name, 0))
+    if (btdev_found(btdev_pick(), name, 0))
         app_say("DEVICE", name);
     else
         app_say("BLE", "SCANNING");
 }
 static void ble_device_button(void)
 {
-    int d = plat_ble_device();
-    if (d == BLE_DEV_OFF) {
-        ui.pick = 0;
-        plat_ble_scan(1);
+    int ev;
+    if (!btdev_busy() && !ui.looking) {
+        ui.looking = 1;
         app_say("BLE", "SCANNING");
-    } else if (d == BLE_DEV_SCANNING) {
-        char name[21];
-        if (plat_ble_found((int)ui.pick, name, 0) && plat_ble_connect((int)ui.pick) == 0) {
-            app_say("CONNECTING", name);
-        } else {
-            plat_ble_scan(0);
-            app_say("BLE", "NO DEVICE");
-        }
-    } else {
-        plat_ble_disconnect();
-        app_say("BLE", "DISCONNECTED");
+        return;
     }
+    ev = btdev_save();
+    ui.looking = 0;
+    app_say(ev == BTDEV_CONNECTING ? btdev_word(ev) : "BLE", ev == BTDEV_CONNECTING ? btdev_name() : btdev_word(ev));
 }
 
 static void input(void)
@@ -336,8 +329,8 @@ static void input(void)
         ui.turns[k] += e;
         ui.turned_at[k] = plat_ms();
         ui.redraw = 1;
-        if (k == EN_ALGO && FM1B_BLE_CENTRAL && plat_ble_device() == BLE_DEV_SCANNING) {
-            ui.pick = clamp(ui.pick + e, 0, 7);
+        if (k == EN_ALGO && FM1B_BLE_CENTRAL && ui.looking) {
+            btdev_choose(btdev_pick() + e);
             ble_device_say();
         } else if (k == EN_PRESET) {
             set.wave ^= 1u;
@@ -478,15 +471,16 @@ void app_frame(void)
         lit_until = 0;
         ui.redraw = 1;
     }
-    if (FM1B_BLE_CENTRAL) {                  /* scanning: a device found is named at once (REC connects to it) */
+    if (FM1B_BLE_CENTRAL) {                  /* looking: a device found is named at once (REC connects to it) */
         static int found;
-        int n = 0;
-        if (plat_ble_device() == BLE_DEV_SCANNING)
-            while (n < 8 && plat_ble_found(n, 0, 0))
-                n++;
-        if (n > found && ui.pick < n)
+        int n = ui.looking ? btdev_count() : 0, ev;
+        btdev_page(ui.looking && !set.ble_off);
+        if (n > found && btdev_pick() < n)
             ble_device_say();
         found = n;
+        while ((ev = btdev_event()) != BTDEV_NONE)   /* a device connected, given up or lost */
+            if (ev == BTDEV_CONNECTED || ev == BTDEV_NO_ANSWER || ev == BTDEV_LOST)
+                app_say("DEVICE", btdev_word(ev));
     }
     if (midi_count != last_midi) {
         last_midi = midi_count;
@@ -494,19 +488,8 @@ void app_frame(void)
     }
     if (pct != last_pct || (uint32_t)(plat_ble_connected() | plat_ble_device() << 1) != last_ble ||
         (ui.msg_until && now >= ui.msg_until)) {
-        static int said_ready;
         last_pct = pct;
         last_ble = (uint32_t)(plat_ble_connected() | plat_ble_device() << 1);
-        static int was;
-        int d = plat_ble_device();
-        if (d == BLE_DEV_READY && !said_ready)
-            app_say("DEVICE", "CONNECTED");
-        else if (d == BLE_DEV_OFF && (was == BLE_DEV_CONNECTING || was == BLE_DEV_SEARCHING))
-            app_say("DEVICE", "FAILED");
-        else if (d == BLE_DEV_OFF && was == BLE_DEV_READY)
-            app_say("DEVICE", "LOST");
-        said_ready = d == BLE_DEV_READY;
-        was = d;
         if (now >= ui.msg_until)
             ui.msg_until = 0;
         ui.redraw = 1;
