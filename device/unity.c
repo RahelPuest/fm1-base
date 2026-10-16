@@ -14,8 +14,8 @@
  *   APP_VERSION "DEV"       a release build passes its own (tools/build.py --release)
  *   APP_BLOCK 256           frames per audio half (5.8 ms at 44.1 kHz), the render's block
  *   FM1B_CDC 0              USB serial console (a second USB function)
- *   FM1B_UAC 0              USB audio input (the master output, recordable over the cable): off until
- *                           felucca-bsp's usb.c is checked at this block size on a device
+ *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
+ *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out) */
@@ -63,9 +63,13 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #define FELUCCA_CDC FM1B_CDC
 #ifndef FM1B_UAC
-#define FM1B_UAC 0
+#define FM1B_UAC 1
 #endif
 #define FELUCCA_UAC FM1B_UAC
+#ifndef FM1B_UAC_48K
+#define FM1B_UAC_48K 0            /* 48 kHz too: needs uac_fir.h, the resampler's filter (not in fm1-base yet) */
+#endif
+#define FELUCCA_UAC_48K FM1B_UAC_48K
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
