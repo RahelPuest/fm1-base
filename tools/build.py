@@ -17,6 +17,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_product = "..."
   o2 = ["dsp/engine.c"]      separate units compiled at -O2 (the app's DSP), relative to APP_DIR
   include = ["dsp/lib"]      more include directories, relative to APP_DIR
+  device_include = ["inc"]   include directories for the firmware only (headers the toolchain lacks)
   mmio_skip = ["dsp/lib/"]   paths whose numbers are not addresses (a library's tables): the register check skips
                              its address literals there (still checks casts, asm and register macros)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
@@ -296,7 +297,7 @@ def ble_units():
 
 def build_app():
     flags = [*CFLAGS, *FPU, *inc(BSP / "chip", BSP / "boards" / "fm1", SRC / "device", SRC / "include", APP, GEN,
-                                 *(APP / d for d in CONF.get("include", [])))]
+                                 *(APP / d for d in CONF.get("include", []) + CONF.get("device_include", [])))]
     if BLE:
         flags += ["-DFM1B_BLE=1", *inc(SRC / "ble" / "shim")]
     for flag in ("FM1B_CDC", "FM1B_UAC", "FM1B_TRS"):
