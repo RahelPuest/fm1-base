@@ -130,13 +130,28 @@ static uint32_t midi_out_count, clock_out_count;
 static uint32_t min_port[MQ];
 static uint32_t out_pkt[4096], out_to[4096], n_out;   /* what went out since the script's last "out" */
 static int ble_state, ble_conn, bdev_state;   /* bdev_state: the Bluetooth MIDI device (BLE_DEV_*) */
+static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];   /* plat_midi_count */
+static void midi_counted(int port, int out)
+{
+    midi_n[port][out]++;
+    midi_t[port][out] = plat_ms() | 1u;
+}
+uint32_t plat_midi_count(int port, int out) { return port >= 0 && port < NPORTS ? midi_n[port][!!out] : 0; }
+uint32_t plat_midi_ago(int port, int out)
+{
+    return port < 0 || port >= NPORTS || !midi_t[port][!!out] ? 0xFFFFFFFFu : plat_ms() - midi_t[port][!!out];
+}
 int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" */
 {
+    int p;
     if (mi_r == mi_w)
         return 0;
+    p = (int)min_port[mi_r % MQ];
     if (port)
-        *port = (int)min_port[mi_r % MQ];
+        *port = p;
     *pkt = min_q[mi_r++ % MQ];
+    if (p >= 0 && p < NPORTS)
+        midi_counted(p, 0);
     return 1;
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
@@ -146,6 +161,10 @@ void plat_midi_send(uint32_t pkt, uint32_t to)
         to &= ~TO_BLE;
     if (!to)
         return;
+    if (to & TO_USB)
+        midi_counted(PORT_USB, 1);
+    if (to & TO_BLE)
+        midi_counted(PORT_BLE, 1);
     midi_out_count++;
     if (n_out < 4096) {
         out_pkt[n_out] = pkt;
@@ -325,6 +344,9 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)
 }
 #ifdef APP_TOUCH
 #include "touch.c"
+#endif
+#ifdef APP_BTDEV
+#include "btdev.c"
 #endif
 #include "app.c"
 

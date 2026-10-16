@@ -183,5 +183,8 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
 #ifdef APP_TOUCH
 #include "touch.c"
 #endif
+#ifdef APP_BTDEV
+#include "btdev.c"                /* Bluetooth MIDI devices for an app's page (lib/btdev.h) */
+#endif
 #include "app.c"
 #include "main_fm1.c"
