@@ -16,7 +16,7 @@
  *   strum A B [MS]               white keys A..B pressed in turn (down then up), MS apart (default 25)
  *   turn ENC N [MS]              (ENC: SELECT ALGO PRESET K1 K2 K3 K4; N detents, MS apart, default 80)
  *   spin ENC N                   N detents at once, exactly N (no acceleration)
- *   master N                     MASTER pot 0..4096
+ *   master N                     MASTER pot 0..4096 (then 40 ms, as the device's smoothing settles)
  *   midi [PORT] B0 B1 B2         incoming MIDI message (PORT: USB, the default, BLE or TRS; hex bytes)
  *   ble connect | ble disconnect a central (FM1B_BLE: the stand-in stack is ready a second after the start)
  *   wav FILE | wavstop           start / stop recording the output
@@ -660,9 +660,10 @@ int main(int argc, char **argv)
             plat_host_exact = 1;
             run_ms(1);
             plat_host_exact = 0;
-        } else if (!strcmp(cmd, "master"))
+        } else if (!strcmp(cmd, "master")) {
             master = (uint32_t)atoi(a);
-        else if (!strcmp(cmd, "midi")) {
+            run_ms(40);                         /* as the device's smoothing settles */
+        } else if (!strcmp(cmd, "midi")) {
             int p = find_name(PORT_N, NPORTS, a);
             min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d);
             min_port[mi_w++ % MQ] = p < 0 ? PORT_USB : (uint32_t)p;
