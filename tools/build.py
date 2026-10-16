@@ -512,7 +512,9 @@ def build_web():
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")
-    found = [d for d in (SRC.parent / "fm1-reader" / "web", SRC.parent / "fm1-parent" / "fm1-reader" / "web") if d.is_dir()]
+    # next to fm1-base, or next to the app's repository (fm1-base a submodule in it)
+    found = [p / "fm1-reader" / "web" for base in (SRC.parent, APP.parent.parent) for p in (base, base / "fm1-parent")
+             if (p / "fm1-reader" / "web").is_dir()]
     reader = Path(os.environ.get("FM1_READER", found[0] if found else SRC.parent / "fm1-reader" / "web"))
     if (reader / "words.js").exists() and (reader / "espeak" / "espeak.wasm").exists():
         (emu / "reader" / "espeak").mkdir(parents=True, exist_ok=True)
