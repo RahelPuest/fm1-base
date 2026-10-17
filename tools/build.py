@@ -24,6 +24,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              its address literals there (still checks casts, asm and register macros)
   rom_check_skip = ["pv_log2"]   functions whose constants only look like ROM addresses (0xFFC00000..): the check
                              that nothing calls or loads the chip ROM skips them
+  mul64_check_skip = ["mul_f256"]   functions the note on inlined 64-bit multiplies beside loads leaves out
+                             (felucca-bsp docs/CPU.md; the compiler runtime's __* are left out anyway)
   vendored = ["third_party/"]   other people's libraries, compiled for the FM-1 with their machine-specific code off
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
@@ -480,6 +482,43 @@ def build_app():
     return bytes(img), syms, dis, rt
 
 
+def mul64_near_loads(dis, window=4):
+    """functions with a load in flight beside a 32x32->64-bit multiply (rN_rM = rA * rB): one up to two instructions
+    before it, or one after it before its product is used (using it waits for the multiply). On the FM-1 such code
+    now and then leaves a register a bit off, most of all beside 16-bit loads (felucca-bsp docs/CPU.md); a
+    multiply in a helper of its own (noinline) is clear of it"""
+    # vsnprintf (ble/wifi): its 64-bit digits are a divide and a multiply a few times a log line, not a hot loop
+    found, fn, body, skip = [], "", [], set(CONF.get("mul64_check_skip", [])) | {"vsnprintf"}
+
+    def scan():
+        for i, ins in enumerate(body):
+            m = re.match(r"(r\d+)_(r\d+) [+-]?= r\d+ \* r\d+", ins)
+            if not m:
+                continue
+            dst = {m.group(1), m.group(2)}
+            before = [b for b in body[max(0, i - 2):i] if not re.search(r"\bcall\b", b)]
+            if any(re.search(r"= [hbd]?\[", b) for b in before):
+                return True
+            for b in body[i + 1:i + 1 + window]:
+                if any(re.search(r"\b" + r + r"\b", b) for r in dst):
+                    break                       # the product used: the multiply has finished
+                if re.search(r"= [hbd]?\[", b):
+                    return True
+        return False
+
+    for ln in dis.splitlines() + ["end:"]:
+        mm = LINE.match(ln)
+        if not mm:
+            m2 = re.match(r"^([A-Za-z_.$][\w.$]*):$", ln.strip())
+            if m2 and not m2.group(1).startswith(".GJT"):   # (a jump table's piece: still the function before it)
+                if fn and not fn.startswith("__") and fn.split(".")[0] not in skip and scan() and fn not in found:
+                    found.append(fn)
+                fn, body = m2.group(1), []
+            continue
+        body.append(mm.group(3))
+    return found
+
+
 def check(img, syms, dis, rt):
     errors, notes = [], []
     m = re.search(r"^([0-9a-f]+) .*\s_start$", syms, re.M)
@@ -508,6 +547,12 @@ def check(img, syms, dis, rt):
             val = (int(v[0]) & 0xFFFFFFFF) if v[0] else int(v[1], 16) & 0xFFFFFFFF
             if 0xFFC00000 <= val < 0xFFD00000:
                 errors.append(f"reference to ROM address {val:#010x}")
+    mul64 = mul64_near_loads(dis)       # the CPU fault of bsp docs/CPU.md: a note, the code may be fine
+    if mul64:
+        notes.append(f"64-bit multiplies inlined beside loads (felucca-bsp docs/CPU.md: may corrupt a "
+                     f"register; move them out of line): {', '.join(mul64[:8])}" + (" ..." if len(mul64) > 8 else ""))
+    else:
+        notes.append("no 64-bit multiply inlined beside a load")
     bt = [n for n in BT_SYMS if re.search(r"\s" + n + r"$", syms, re.M)]
     if CONF.get("ble") and not BLE:
         if bt:
