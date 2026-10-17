@@ -230,6 +230,37 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
         *q = 0;
         log_line_send(b);
+        for (k = (int)FM1_CRASH_CTX_N - 1; k >= 0; k--) {   /* the registers at the last crashes, the oldest first */
+            const fm1_crash_ctx_t *x = &fm1_crash_ctx[(fm1_crash.count - (uint32_t)k) % FM1_CRASH_CTX_N];
+            uint32_t r, j;
+            if (x->count != fm1_crash.count - (uint32_t)k || x->count == 0u)
+                continue;                            /* (not one of them: an older run's, or never written) */
+            q = b;
+            for (j = 0; j < 8u; j++)
+                *q++ = "regs n  "[j];
+            hexs(q, x->count);
+            q += 8;
+            for (j = 0; j < 4u; j++)
+                *q++ = " pc "[j];
+            hexs(q, x->pc);
+            q += 8;
+            for (j = 0; j < 5u; j++)
+                *q++ = " usp "[j];
+            hexs(q, x->usp);
+            log_line_send(b);
+            for (r = 0; r < 16u; r += 4u) {
+                q = b;
+                *q++ = 'r';
+                *q++ = (char)('0' + r / 10u);
+                *q++ = (char)('0' + r % 10u);
+                for (j = 0; j < 4u; j++) {
+                    *q++ = ' ';
+                    hexs(q, x->r[r + j]);
+                    q += 8;
+                }
+                log_line_send(b);
+            }
+        }
     } else {
         log_line_send("no crash recorded");
     }
