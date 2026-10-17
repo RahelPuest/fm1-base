@@ -98,8 +98,19 @@ installs over the old one as an update and keeps what players saved. Work on a b
   CTL-1's and Radio's for the form). Third-party code with its licence file beside it.
 - `README.md` credits: fm1-base and felucca-bsp, "from Felucca by Leo Kuroshita (Hügelton Instruments)"; the
   third-party code. No Felucca, M-VAVE or Hügelton names in the product's name.
-- Release: `./build.sh --release X.Y`, then `base/tools/publish_site.sh app X.Y` for a site (installer, emulator),
-  and a GitHub release with the `.fwsc` and notes.
+- The docs and the manual: every path and link still there. A port removes the fork's own tools, so commands such
+  as `python3 tools/fm1_install.py` become `python3 base/tools/fm1_install.py`, and a link to a script the fork no
+  longer has (a rescue script, an installer page) points to fm1-base's or felucca-bsp's copy.
+- The site: if the fork had its own, its installer page and package code came from Felucca; use fm1-base's
+  (`base/tools/publish_site.sh`, or the fork's own page script with `base/web/installer.html` for the install
+  page). The fork's own pages (its landing page, its manual's text) stay.
+- The version: look at the firmware's existing releases and tags first (`gh release list`, `git tag`). The new
+  release comes after the latest of them, never before: the package identity (`id_prefix` + XXYYZZ) must go up,
+  or players would be offered an older firmware than the one they run.
+- Release: `./build.sh --release X.Y`, install that exact file on an FM-1 and check it once more, then
+  `base/tools/publish_site.sh app X.Y` for a site (installer, emulator), and a GitHub release with the `.fwsc` and
+  notes for players: what changes for them, that their saved settings carry over, that the earlier versions stay
+  under the GPL.
 - Ask the maintainers of felucca-bsp to list the firmware (felucca-bsp `LISTING.md`) if the user wants that.
 
 ## What not to do

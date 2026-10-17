@@ -113,7 +113,8 @@ DSP units built at -O2), `ble`, `ble_central`, `wifi`, `usb_audio_in` / `usb_aud
    commands), then the browser build (`./build.sh --web`). Build with a Python whose Pillow has libraqm
    (`PYTHON=/opt/homebrew/bin/python3...`): the fonts need it.
 6. Build the firmware again (`./build.sh`: the test run builds the simulator and the emulator, not the package),
-   install it on an FM-1 (`python3 base/tools/fm1_install.py app/build/NAME.fwsc`) and check it: boot, screen, every
+   install it on an FM-1 (`python3 base/tools/fm1_install.py app/build/NAME.fwsc`; if the FM-1 drops off USB
+   partway, run it again: the update loader finishes the write) and check it: boot, screen, every
    button and knob, the keys, sound, MIDI in and out, a setting saved across a power cycle, an update from the
    firmware itself, Bluetooth or WiFi if it has them. `base/tools/fm1_remote.py` drives it over USB (`screen`,
    `log`, `tap`, `turn`, `key`). Check the sound without playing it aloud: record the FM-1's USB audio on the
