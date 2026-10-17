@@ -54,6 +54,11 @@ enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
 void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE; main loop, the render or the tick */
 void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
+uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues of to (TO_USB, TO_BLE): the fewest
+                                        * among the ports someone listens on; 0 when nobody does. A sequencer keeps
+                                        * room for the note-offs it owes before it sends a note-on */
+uint32_t plat_midi_out_link(void);     /* a number that changes at each new USB connection (a host to tell its
+                                        * sounds again: programs, volumes) */
 uint32_t plat_midi_count(int port, int out);   /* messages through port PORT_* since the start (out: sent), real-time (clock...) left out */
 uint32_t plat_midi_ago(int port, int out);     /* ms since the last one (0xFFFFFFFF: none yet) */
 
@@ -124,13 +129,39 @@ void plat_yield(void);
 void plat_log(const char *line);
 /* the flash's data area, 0x97000..0xDFFFF, for an app's own big data (a table it builds, samples): its store objects
  * live there too, at the offsets it gave them (APP_STORE_MAP), so it keeps to the rest. Main loop only; an erase or a
- * write stops everything for a moment (the sound too: no flash reads meanwhile) */
+ * write stops everything for a moment (the sound too: no flash reads meanwhile).
+ * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
+ * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
+ * a sector there, so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF) */
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
-const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the area */
+#define PLAT_XDATA0_LO 0x93000u
+#define PLAT_XDATA0_HI 0x97000u
+#define PLAT_XDATA1_LO 0xE5000u
+#define PLAT_XDATA1_HI 0xFC000u
+#define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
+                              plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
+                              plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI))
+static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   /* [off, off + n) in [lo, hi) */
+{
+    return off >= lo && off <= hi && n <= hi - off;
+}
+const uint8_t *plat_data(uint32_t off);   /* read in place; 0 = outside the windows */
 int plat_data_erase(uint32_t off);        /* the 4 KiB sector at off (aligned); 0 = done */
-int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* into erased flash, src in RAM; 0 = done */       /* a line for the radio's log (fm1_remote.py log; it survives a restart) */
-void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */                 /* long work in the main loop (drawing) lets the app's background run (app_yield) */
+int plat_data_write(uint32_t off, const void *src, uint32_t n);   /* into erased flash, src in RAM; 0 = done */
+void plat_sysex_send(const uint8_t *frame, uint32_t n);   /* a whole SysEx frame (F0 .. F7) out over USB */
+
+/* the app's own commands in the update's SysEx framing (F0 pack7(00 59 cmd len24 body ~sum) F7: felucca-bsp ota.c),
+ * an app with APP_USB_CMD: app_usb_cmd(d, n) gets each frame whose cmd the platform does not take (d: the decoded
+ * frame, cmd d[2], the body from d + 6). Inside it the app may pull data from the host as an update does: */
+int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n);   /* n bytes (512 at most) at the host's addr; 0 = ok.
+                                                                 * Waits (tries: 3); main loop only */
+void plat_host_patience(uint32_t try_ms, uint32_t total_ms);   /* each try's wait (default 5000) and the whole
+                                                                 * transfer's (0: no limit) */
+
+/* USB audio full (FM1B_UAC): 1, the USB audio input at full level (the app's render at gain 4096), MASTER for the
+ * speaker and headphones only; 0, both at MASTER (the default) */
+void plat_usb_audio_full(int on);
 
 /* the keys' velocity and pressure (an app with APP_KEY_SENSE): on, the scan reads the keys on the analog rows and
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */
@@ -138,7 +169,12 @@ void plat_sense(int on);
 uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 / PA8; the top row is probed) */
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
-int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad */
+int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad (an empty object is
+                                                               * none: a restore writes one for an absent object) */
+int plat_store_head(uint32_t obj, void *dst, uint32_t n);     /* its first n bytes (a header): n, < 0 = none / bad /
+                                                               * shorter */
+int plat_store_size(uint32_t obj);                           /* its length in bytes, < 0 = none / bad (an app that
+                                                               * wants it whole or not at all checks it first) */
 int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok */
 #define PLAT_STORE_MAX 3840u           /* bytes per object */
 /* The objects are the app's (app.h): an enum that includes OBJ_PANEL (the panel calibration, the platform's) and
@@ -165,4 +201,20 @@ uint32_t plat_xruns(void);
  *                   uint32_t pressed) (the top row), int app_key_led_ok(uint32_t key) (0: its column dark when read);
  *                   from the scan's interrupt
  *   APP_SYSEX       int app_sysex(const uint8_t *p, uint32_t n)   a SysEx frame from USB the platform does not take
- *                   (p: the bytes between F0 and F7); 1 = the app's. Its answers: plat_sysex_send. Main loop */
+ *                   (p: the bytes between F0 and F7); 1 = the app's. Its answers: plat_sysex_send. Main loop
+ *   APP_USB_CMD     void app_usb_cmd(const uint8_t *d, uint32_t n)   a frame in the update's framing (above). Main loop
+ *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
+ *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
+ *
+ * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
+ * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app
+ * with APP_REDRAW gets back what a slow link dropped.
+ *
+ * Backup and restore over USB (fm1.toml backup = true: FM1B_BACKUP 1, device/backup.c; tools/fm1_backup.py): the
+ * app's saved objects, all or nothing. The app's app.h:
+ *   APP_BACKUP_OBJS {OBJ_PROJ, ...}   the objects, in order (not OBJ_PANEL: the calibration is the unit's)
+ *   APP_BACKUP_MAGIC 0x...u           its image's magic (4 ASCII bytes, little-endian), APP_BACKUP_VERSION its format
+ *   APP_BACKUP_WHAT "replaces all songs"   the restore question's second line
+ * and these: int app_backup_playing(void) (1: no restore now, STOP FIRST), void app_backup_flush(void) (what is not
+ * saved yet, saved: a backup starts), void app_backup_hold(int on) (no saving while a backup streams),
+ * void app_backup_restored(void) (everything from the flash again) */

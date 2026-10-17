@@ -19,10 +19,10 @@ uint32_t plat_buttons(void)
     for (i = 0; i < NB; i++)
         if (raw & (1u << panel.btn[i]))
             out |= 1u << i;
-    return out | remote.btn;
+    return out | remote.btn | mirror_in_buttons();
 }
 
-uint32_t plat_keys(void) { return (fm1_in.notes | remote.keys) & ((1u << NKEYS) - 1u); }
+uint32_t plat_keys(void) { return (fm1_in.notes | remote.keys | mirror_in_keys()) & ((1u << NKEYS) - 1u); }
 static uint32_t plat_remote_keys(void) { return remote.keys; }
 
 int32_t plat_enc(int role)
@@ -32,10 +32,14 @@ int32_t plat_enc(int role)
         return 0;
     r = remote.enc[role];
     remote.enc[role] = 0;
-    return fm1_enc_take(panel.enc[role]) * panel.dir[role] + r;
+    r += fm1_enc_take(panel.enc[role]) * panel.dir[role] + mirror_in_enc(role);
+    if (r)
+        mirror_enc(role, r);                     /* (the mirror's input reports show the turns) */
+    return r;
 }
 
-static volatile uint32_t master_pos = 2048;   /* MASTER's position, 0..4096 (main_fm1.c reads the pot) */
+static volatile uint32_t master_pos = 2048;   /* MASTER's position, 0..4096 (main_fm1.c reads the pot; the remote's
+                                               * or the mirror's when they set it) */
 uint32_t plat_master(void) { return master_pos; }
 
 /* LEDs: the picture is built off-line and copied one byte per column (Felucca: clearing
@@ -83,6 +87,11 @@ void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t
         fm1_led[c] = nl[c];
         fm1_led_dim[c] = dl[c];
     }
+    {   /* the mirror's view: PLAY lit (either LED), and bit 15 PLAY lit red */
+        uint32_t play = 1u << B_PLAY, lit = buttons & ((1u << NB) - 1u);
+        mirror_leds((lit & ~play) | (buttons & (play | LED_PLAY_GREEN) ? play : 0u) | (buttons & play ? 1u << 15 : 0u),
+                    keys);
+    }
 }
 static uint8_t glow_on = 1, play_red;
 void plat_glow(int on) { glow_on = (uint8_t)(on != 0); }
@@ -126,19 +135,38 @@ void plat_unlock(uint32_t f)
 }
 void plat_sysex_send(const uint8_t *frame, uint32_t n) { ota_wire_send(frame, n); }
 
-/* the data area (plat.h): read through the unencrypted XIP window (main_fm1.c fl_plain_window_init) */
+/* the data area and its two more windows (plat.h): read through the unencrypted XIP window (main_fm1.c
+ * fl_plain_window_init, from 0x93000 up); erased and written by felucca-bsp's RAM driver (FL_RANGE_OK: the store, its
+ * FL_XDATA windows) */
+_Static_assert(FL_XDATA0_LO == PLAT_XDATA0_LO && FL_XDATA0_HI == PLAT_XDATA0_HI && FL_XDATA1_HI == PLAT_XDATA1_HI &&
+               FL_AUTO_LO == PLAT_XDATA1_LO && FL_AUTO_HI == FL_XDATA1_LO, "plat.h's windows are felucca-bsp's");
 const uint8_t *plat_data(uint32_t off)
 {
-    return flash_ok && FL_IN(off, 1u, PLAT_DATA_LO, PLAT_DATA_HI) ? (const uint8_t *)FL_XIP(off) : 0;
+    return flash_ok && PLAT_DATA_OK(off, 1u) ? (const uint8_t *)FL_XIP(off) : 0;
 }
 int plat_data_erase(uint32_t off)
 {
-    return flash_ok && !(off & 0xFFFu) && FL_IN(off, 0x1000u, PLAT_DATA_LO, PLAT_DATA_HI) ? st_erase(off) : -1;
+    uint32_t took;
+    if (!flash_ok || (off & 0xFFFu) || !PLAT_DATA_OK(off, 0x1000u))
+        return -1;
+    fm1_wdt_feed();                               /* (a run of erases: tens of ms each) */
+    audio_silence();
+    return fl_erase4k(off, &took);
 }
 int plat_data_write(uint32_t off, const void *src, uint32_t n)
 {
-    return flash_ok && FL_IN(off, n, PLAT_DATA_LO, PLAT_DATA_HI) ? st_prog(off, src, n) : -1;
+    return flash_ok && PLAT_DATA_OK(off, n) ? fl_write(off, src, n) : -1;
 }
+/* a pull from the host in the update's framing (ota.c ota_read), and how long it may take */
+int plat_host_read(uint32_t addr, uint8_t *dst, uint32_t n) { return n > 512u ? -1 : ota_read(addr, dst, n); }
+void plat_host_patience(uint32_t try_ms, uint32_t total_ms)
+{
+    ota_try_ms = try_ms ? try_ms : 5000u;
+    ota_deadline = total_ms ? ota_now_ms() + total_ms : 0u;
+}
+/* USB audio full: the render at full level for the USB audio input, MASTER after it (main_fm1.c render_block) */
+static volatile uint8_t uac_full;
+void plat_usb_audio_full(int on) { uac_full = (uint8_t)(on != 0); }
 void plat_yield(void)
 {
     ble_poll();                                   /* Bluetooth: its notifications go out while the screen draws */
@@ -167,6 +195,16 @@ uint32_t plat_midi_ago(int port, int out)
 {
     return port < 0 || port >= NPORTS || !midi_t[port][!!out] ? 0xFFFFFFFFu : plat_ms() - midi_t[port][!!out];
 }
+uint32_t plat_midi_out_room(uint32_t to)
+{
+    uint32_t room = 0xFFFFFFFFu, r;
+    if ((to & TO_USB) && (r = midi_out_room()) && r < room)
+        room = r;
+    if ((to & TO_BLE) && (r = ble_midi_out_room()) && r < room)
+        room = r;
+    return room == 0xFFFFFFFFu ? 0u : room;
+}
+uint32_t plat_midi_out_link(void) { return midi_out_link(); }
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
@@ -232,6 +270,8 @@ uint32_t plat_analog_mask(void)
 }
 
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
+int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
+int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }
 int plat_store_save(uint32_t obj, const void *src, uint32_t len) { return flash_ok ? st_save(obj, src, len) : -9; }
 
 static volatile uint32_t audio_cpu_pct, audio_xruns;

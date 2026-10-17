@@ -96,18 +96,40 @@ static int st_current(uint32_t obj, st_hdr_t *h)
     return -1;
 }
 
-/* load object into dst (up to max bytes); returns the length, or -1 */
+/* load object into dst (up to max bytes); returns the length, or -1 (none; an empty object is none too: a restore
+ * writes one for an object the backup did not have, backup.c) */
 static int st_load(uint32_t obj, void *dst, uint32_t max)
 {
     uint32_t i;
     st_hdr_t h;
-    if (st_current(obj, &h) < 0)
+    if (st_current(obj, &h) < 0 || !h.len)
         return -1;
     if (h.len > max)
         h.len = max;
     for (i = 0; i < h.len; i++)
         ((uint8_t *)dst)[i] = st_buf[i];
     return (int)h.len;
+}
+
+/* the object's length, or -1 (none) */
+static int st_size(uint32_t obj)
+{
+    st_hdr_t h;
+    if (st_current(obj, &h) < 0 || !h.len)
+        return -1;
+    return (int)h.len;
+}
+
+/* the object's first n bytes (a header, without a buffer for the whole): n, or -1 (none, or shorter than n) */
+static int st_load_head(uint32_t obj, void *dst, uint32_t n)
+{
+    uint32_t i;
+    st_hdr_t h;
+    if (st_current(obj, &h) < 0 || !h.len || h.len < n)
+        return -1;
+    for (i = 0; i < n; i++)
+        ((uint8_t *)dst)[i] = st_buf[i];
+    return (int)n;
 }
 
 static int st_save(uint32_t obj, const void *src, uint32_t len)

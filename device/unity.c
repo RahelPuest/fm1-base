@@ -19,7 +19,9 @@
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app, at MASTER
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
- *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out) */
+ *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
+ *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
+ *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -78,6 +80,14 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
+#ifndef FM1B_MIRROR
+#define FM1B_MIRROR 0
+#endif
+#ifndef FM1B_BACKUP
+#define FM1B_BACKUP 0
+#endif
+#define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
+#define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
 #include "usb.c"
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
@@ -167,9 +177,15 @@ static void ota_commit(const uint8_t *parm)
 #define ANN_DATA PLAT_POOL
 #include "ann_words.h"            /* the link to the app's words file (tools/gen_words.py, from the app's words.tsv) */
 #include "announce.c"             /* the screen as text for a screen reader (fm1-reader) */
-static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room (nobody reading), not sent */
+#if FM1B_BACKUP
+static uint8_t backup_streaming(void);
+#else
+static uint8_t backup_streaming(void) { return 0; }
+#endif
+static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room (nobody reading), a backup
+                                                          * streaming: not sent */
 {
-    if (!usb.config || usb.suspended || SXQ - (so_w - so_r) < (n + 2u) / 3u)
+    if (!usb.config || usb.suspended || backup_streaming() || sx_busy || SXQ - (so_w - so_r) < (n + 2u) / 3u)
         return -1;
     return ota_wire_send(p, n);
 }
@@ -183,7 +199,123 @@ static int ann_wire_send(const uint8_t *p, uint32_t n)   /* never waits: no room
 #if FM1B_WIFI
 #include "wifi.c"                 /* WiFi (ble/wifi/, the SDK's lwIP) */
 #endif
+#if FM1B_MIRROR
+#include "mirror.c"               /* the screen and the panel mirrored over USB (web/mirror/, tools/fm1_mirror.py) */
+static uint32_t mr_free(void) { return MRQ - (mr_w - mr_r); }
+static void mr_put(const uint8_t *p, uint32_t n)
+{
+    uint32_t w = mr_w, i;
+    for (i = 0; i < n; i++)
+        mr_q[(w + i) % MRQ] = p[i];
+    RING_PUBLISH();                                 /* the bytes before the index: usb.c sends whole frames */
+    mr_w = w + n;
+}
+static int mr_link(void) { return usb.config ? (int)(midi_links & 0x7FFFFFFFu) : -1; }
+static int mr_busy(void) { return !usb.config || usb.suspended || backup_streaming(); }
+static int mr_ctl_send(const uint8_t *p, uint32_t n)
+{
+    if (sx_busy || SXQ - (so_w - so_r) < (n + 2u) / 3u)
+        return -1;
+    return ota_wire_send(p, n);
+}
+static void mr_redraw(void)                         /* the app draws everything again (APP_REDRAW) */
+{
+#ifdef APP_REDRAW
+    app_redraw();
+#endif
+}
+static int mr_test(int on)                          /* a test session (APP_MIRROR_TEST): 1 done, 0 refused */
+{
+#ifdef APP_MIRROR_TEST
+    return app_mirror_test(on);
+#else
+    return !on;
+#endif
+}
+#else
+static uint32_t mirror_in_buttons(void) { return 0; }
+static uint32_t mirror_in_keys(void) { return 0; }
+static int32_t mirror_in_enc(int role) { (void)role; return 0; }
+static uint32_t mirror_in_master(uint32_t pot) { return pot; }
+static void mirror_enc(int role, int32_t n) { (void)role, (void)n; }
+static void mirror_leds(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
+#endif
 #include "plat_fm1.c"
+#if FM1B_BACKUP
+#include "backup.c"               /* backup and restore of the app's objects over USB (tools/fm1_backup.py) */
+static uint8_t backup_streaming(void) { return bu.on; }
+static int rs_fetch(uint32_t addr, uint8_t *dst, uint32_t n) { return ota_read(addr, dst, n); }
+static int rs_note(uint32_t addr)                   /* (past the question: no session deadline, 3 tries) */
+{
+    uint8_t b[8];
+    ota_deadline = 0;
+    return ota_read(addr, b, 8);
+}
+static int rs_playing(void) { return app_backup_playing() != 0; }
+static void rs_screen(const char *a, const char *b)
+{
+    lcd_fill(0, 0, 240, 240, C_BLACK);
+    draw_text_box(0, 92, 240, &FONT_S, a, C_WHITE, 1);
+    if (b)
+        draw_text_box(0, 124, 240, &FONT_S, b, C_HI, 1);
+}
+static void rs_begin(void)                          /* a backup is coming: patient now (5 s a read, 2 min in all) */
+{
+    app_panic();
+    ota_try_ms = 5000u;
+    ota_deadline = ota_now_ms() + 120000u;
+}
+static void rs_show(uint32_t pct)
+{
+    char b[8];
+    uint32_t i = 0;
+    if (pct >= 100u)
+        b[i++] = '1';
+    if (pct >= 10u)
+        b[i++] = (char)('0' + pct / 10u % 10u);
+    b[i++] = (char)('0' + pct % 10u);
+    b[i++] = '%';
+    b[i] = 0;
+    if (!pct)
+        lcd_fill(0, 0, 240, 240, C_BLACK);
+    draw_text_box(0, 92, 240, &FONT_S, "RESTORE", C_WHITE, 1);
+    draw_text_box(0, 124, 240, &FONT_S, b, C_HI, 1);
+}
+static int rs_ask(void)                             /* SEL yes, HOME no; playing or 60 s: no. The hand's buttons only */
+{
+    uint32_t t0 = fm1_ms, was = plat_buttons() & ~mirror_in_buttons() & ~remote.btn;
+    rs_screen("RESTORE FROM USB?", "SEL yes   HOME no");
+    draw_text_box(0, 156, 240, &FONT_S, APP_BACKUP_WHAT, C_GRAY, 1);
+    ann_say("Restore from USB? It " APP_BACKUP_WHAT ". SEL: yes. HOME: no.", 0, ANN_NOW | ANN_KEEP);
+    while (fm1_ms - t0 < 60000u) {
+        uint32_t b = plat_buttons() & ~mirror_in_buttons() & ~remote.btn, down = b & ~was;
+        fm1_wdt_feed();
+        was = b;
+        if (down >> B_SEL & 1u)
+            return 1;
+        if ((down >> B_HOME & 1u) || rs_playing())
+            return 0;
+    }
+    return 0;
+}
+static void rs_reload(void)
+{
+    app_panic();
+    app_backup_restored();
+}
+static int rs_rec_erase(void) { return ota_erase(RS_REC); }
+static int rs_rec_prog(uint32_t off, const void *src, uint32_t n) { return ota_prog(RS_REC + off, src, n); }
+static int rs_rec_read(uint32_t off, void *dst, uint32_t n) { return ota_fread(RS_REC + off, dst, n); }
+static int bu_room(void)                            /* the SysEx ring empty: a frame goes in whole; -1: USB gone */
+{
+    if (!usb.config || usb.suspended)
+        return -1;
+    return so_w == so_r;
+}
+static int bu_send(const uint8_t *p, uint32_t n) { return ota_wire_send(p, n); }
+static void bu_flush(void) { app_backup_flush(); }
+static void bu_hold(int on) { app_backup_hold(on); }
+#endif
 #ifdef APP_TOUCH
 #include "touch.c"
 #endif

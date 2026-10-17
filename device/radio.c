@@ -406,6 +406,10 @@ static uint32_t bo_w, bo_r;
 #define BCQ 4u
 static uint16_t ble_clk_ms[BCQ];
 static volatile uint32_t bc_w, bc_r;
+static uint32_t ble_midi_out_room(void)          /* free slots in the out ring; 0: nobody listening */
+{
+    return ble_state == BLE_READY && ble_conn ? BQ - (bo_w - bo_r) : 0u;
+}
 static void ble_midi_tap(uint32_t pkt)            /* main loop (locked) or the tick; nothing queues for a central not there */
 {
     uint16_t ms = (uint16_t)(fm1_ms & 0x1FFFu);

@@ -30,9 +30,14 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
                              by flags: the register check skips them entirely (it reads the text: x86 asm behind
                              an #if would fail it)
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
+  font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
+  mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
+                             tools/fm1_mirror.py), the panel played from the host
+  backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
+                             tools/fm1_backup.py); app.h gives APP_BACKUP_OBJS, _MAGIC, _VERSION and the app_backup_* hooks
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
@@ -205,7 +210,8 @@ def generate():
     tools = SRC / "tools"
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
               [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
-        r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True)
+        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", []))}
+        r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
             sys.stderr.write(r.stderr)
@@ -415,6 +421,7 @@ def build_app():
             flags.append("-DFM1B_BLE_CENTRAL=1")
     if WIFI:
         flags += ["-DFM1B_WIFI=1", "-DSHIM_WIFI=1", *inc(SRC / "ble" / "shim")]
+    flags += opt_flags()
     for key, flag in (("usb_audio_in", "FM1B_UAC"), ("usb_audio_out", "FM1B_UAC_OUT")):
         if key in CONF and flag not in os.environ:
             flags.append(f"-D{flag}={int(bool(CONF[key]))}")
@@ -660,6 +667,11 @@ def o2_objects(cc, base_flags, out):
     return [str(o) for _, o in jobs]
 
 
+def opt_flags():
+    """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
+    return [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP")) if CONF.get(key)]
+
+
 def build_host():
     """the app against a simulated FM-1 (host/plat_host.c), with this machine's compiler; -ffp-contract=off like the
     device (no fused multiply-add), so the samples match"""
@@ -670,7 +682,7 @@ def build_host():
     o2_objs = o2_objects(os.environ.get("CC", "cc"), ["-O2", "-ffp-contract=off", "-std=c99", "-w", "-DPLAT_HOST", *inc_dirs],
                          out / "o2")
     cmd = [os.environ.get("CC", "cc"), "-O2", "-ffp-contract=off", "-std=c99", "-Wall", "-Wextra",
-           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
+           "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -691,7 +703,7 @@ def build_web():
     o2_objs = o2_objects("emcc", ["-O2", "-ffp-contract=off", "-std=gnu99", "-w", "-DPLAT_HOST", "-DPLAT_WEB", *web_inc],
                          emu / "o2")
     cmd = ["emcc", "-O2", "-ffp-contract=off", "-std=gnu99", "-Wall", "-Wno-unused-function", "-Wno-unused-parameter",
-           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
+           "-Wno-unused-variable", "-DPLAT_HOST", "-DPLAT_WEB", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI, *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
            *(f"-I{d}" for d in (SRC / "host", SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            "--no-entry", "-sSTANDALONE_WASM", "-sSTACK_SIZE=1048576", "-sINITIAL_MEMORY=33554432", "-sFILESYSTEM=0",
            "-o", str(emu / "app.wasm"), str(SRC / "web" / "emu" / "emu_web.c"), *o2_objs]
@@ -792,6 +804,7 @@ def main():
     parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))), ("WiFi", WIFI),
              ("USB audio in", on("usb_audio_in", "FM1B_UAC", True)),
              ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
+             ("screen mirroring", bool(CONF.get("mirror"))), ("backup and restore", bool(CONF.get("backup"))),
              ("velocity and pressure", any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M)
                                             for f in APP.glob("*.h")))]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +

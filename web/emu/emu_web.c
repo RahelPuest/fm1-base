@@ -65,6 +65,19 @@ __attribute__((used, visibility("default"))) void web_said_clear(void) { said_n 
 __attribute__((used, visibility("default"))) uint8_t *web_sysex_buf(void) { return sx_in; }
 __attribute__((used, visibility("default"))) void web_sysex(uint32_t n) { ann_frame(sx_in, n > sizeof sx_in ? sizeof sx_in : n, now_ms); }
 
+/* the page's screen reader on (1) or off (0): on, the reader's HELLO now and every 2 s of the device's time (as the
+ * simulator's `listen`), so it never lapses while the page is in the background; off, its BYE (an app's words then
+ * come through web_said_buf) */
+__attribute__((used, visibility("default"))) void web_reader(int on)
+{
+    static const uint8_t HELLO[] = {ANN_H0, ANN_H1, ANN_H2, ANN_HELLO, ANN_VER}, BYE[] = {ANN_H0, ANN_H1, ANN_H2, ANN_BYE};
+    sim_listen = on != 0;
+    if (on)
+        ann_frame(HELLO, sizeof HELLO, now_ms);
+    else
+        ann_frame(BYE, sizeof BYE, now_ms);
+}
+
 __attribute__((used, visibility("default"))) void web_boot(void) { boot(); }
 __attribute__((used, visibility("default"))) void web_buttons(uint32_t m) { held_btn = m; }
 __attribute__((used, visibility("default"))) void web_keys(uint32_t m)
@@ -129,3 +142,7 @@ __attribute__((used, visibility("default"))) void web_store_set_len(uint32_t obj
 __attribute__((used, visibility("default"))) uint32_t web_store_writes(void) { return store_writes; }
 __attribute__((used, visibility("default"))) uint32_t web_nobj(void) { return OBJ_NOBJ; }
 __attribute__((used, visibility("default"))) uint32_t web_store_max(void) { return PLAT_STORE_MAX; }
+
+#ifdef APP_WEB
+#include "web.c"                        /* the app's own exports for its page (app.h APP_WEB) */
+#endif

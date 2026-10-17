@@ -38,7 +38,13 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
         uac_render_start();
 #endif
     {
-        uint32_t k;
+        uint32_t k, gain = APP_GAIN(master_pos);
+#if FELUCCA_UAC
+        const int full = uac_full != 0;             /* USB audio full: the render at full level for the USB audio
+                                                     * input, MASTER for the speaker after it (plat_usb_audio_full) */
+#else
+        const int full = 0;
+#endif
         for (k = 0; k < HALF_FRAMES; k += REND_FRAMES) {
             if (radio_quiet) {                        /* the radio calibrating: no flash reads (radio.c) */
 #ifdef APP_QUIET
@@ -49,16 +55,23 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
                     o[2u * k + i] = 0;
 #endif
             } else {
-                app_render(o + 2u * k, REND_FRAMES, APP_GAIN(master_pos));
+                app_render(o + 2u * k, REND_FRAMES, full ? 4096u : gain);
             }
             if (radio_quiet)
                 continue;
 #if FELUCCA_UAC_OUT
-            uac_play(o + 2u * k, REND_FRAMES, master_pos * master_pos >> 12);   /* the computer's audio, at MASTER */
+            uac_play(o + 2u * k, REND_FRAMES, full ? 4096u : master_pos * master_pos >> 12);   /* the computer's audio,
+                                                                                         * at MASTER */
 #endif
 #if FELUCCA_UAC
             uac_tap(o + 2u * k, REND_FRAMES);       /* the USB audio input: the same master output */
 #endif
+            if (full) {                             /* the speaker and headphones: MASTER after the tap */
+                const float g = (float)gain * (1.0f / 4096.0f);
+                uint32_t i;
+                for (i = 0; i < 2u * REND_FRAMES; i++)
+                    o[2u * k + i] = (int32_t)((float)o[2u * k + i] * g);
+            }
         }
     }
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
@@ -516,6 +529,51 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
 }
 #endif
 
+/* a frame in the update's framing that ota_service did not take (d: its decoded length, the frame in ota_dec):
+ * backup and restore (backup.c), the mirror (mirror.c), or the app's (APP_USB_CMD) */
+static void usb_cmd(uint32_t d)
+{
+    if (d < 7u || ota_dec[2] == 0x11u)
+        return;
+#if FM1B_BACKUP
+    if (d == 11u && ota_dec[2] == BU_REQ && bu_rd32(ota_dec + 6) == BU_MAGIC && flash_ok) {
+        bu_start(app_backup_playing());             /* a backup to the host: streamed by bu_step, playing on */
+        return;
+    }
+    if (d == 15u && ota_dec[2] == RS_REQ && flash_ok) {   /* a restore from the host */
+        uint32_t len = ota_rd32(ota_dec + 6), crc = ota_rd32(ota_dec + 10);
+        int begun = 0, rc;
+        if (bu.on)
+            bu_stop();                              /* (a backup streaming: given up) */
+        ota_try_ms = 300u;                          /* its head first: a host that does not answer costs a second */
+        ota_deadline = ota_now_ms() + 3000u;
+        rc = restore_rx(len, crc, &begun);
+        ota_try_ms = 5000u;
+        ota_deadline = 0;
+        if (begun)
+            app_ui_init();                          /* the screen again (restored: everything reloaded) */
+        app_say(rc == RS_E_PLAYING ? "STOP FIRST" : "RESTORE FROM USB",
+                !rc ? "RESTORED" : rc == RS_E_PLAYING ? "then restore" : rc == RS_E_NO ? "NOTHING CHANGED" : "NOT RESTORED");
+        return;
+    }
+#endif
+#if FM1B_MIRROR
+    if (d == 8u && ota_dec[2] == MR_REQ) {
+        mirror_cmd(ota_dec[6]);                     /* the screen mirrored: on, off, refresh */
+        return;
+    }
+    if (d == 12u && ota_dec[2] == MR_REMOTE) {
+        mirror_remote(ota_dec + 6);                 /* the host's hands while it mirrors */
+        return;
+    }
+#endif
+#ifdef APP_USB_CMD
+    app_usb_cmd(ota_dec, d);
+    ota_try_ms = 5000u;                             /* (the app's patience, plat_host_patience, back to the default) */
+    ota_deadline = 0;
+#endif
+}
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
@@ -650,6 +708,9 @@ static void fm1_main(void)
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
         irq_restore(f);
         if (flash_ok) {
+#if FM1B_BACKUP
+            rs_boot();                              /* a restore's commit cut short by a power loss: finished */
+#endif
             ota_boot_cleanup();
             fl_plain_window_init();                 /* the data area read in place, unencrypted (plat_data) */
         }
@@ -719,7 +780,7 @@ static void fm1_main(void)
             int32_t a = fm1_an.con || fm1_an.pend ? (int32_t)fm1_an.master : fm1_adc_read(FM1_ADC_MASTER);
             if (a >= 0) {
                 knob += (a * 16 - knob) / 8;
-                master_pos = remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4);
+                master_pos = mirror_in_master(remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4));
             }
         }
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
@@ -764,7 +825,14 @@ static void fm1_main(void)
                 ota_frame_done();
         }
         fm1b_dbg.stage = 4;
-        ota_service();                              /* M-UPGRADE handshake (other SysEx is dropped) */
+        usb_cmd(ota_service());                     /* M-UPGRADE handshake; the commands in its framing (backup,
+                                                     * mirror, the app's); other SysEx is dropped */
+#if FM1B_BACKUP
+        bu_step();                                  /* a backup streaming to the host */
+#endif
+#if FM1B_MIRROR
+        mirror_step();                              /* the screen mirrored: input reports, redraws, timeouts */
+#endif
         if (usb.ota_req) {
             usb.ota_req = 0;
             app_panic();                            /* silence: the update rewrites the flash */

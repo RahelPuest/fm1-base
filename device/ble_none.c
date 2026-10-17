@@ -7,6 +7,7 @@ static void ble_start(void) {}
 static void ble_poll(void) {}
 static int ble_midi_in(uint32_t *pkt) { (void)pkt; return 0; }
 static void ble_midi_tap(uint32_t pkt) { (void)pkt; }
+static uint32_t ble_midi_out_room(void) { return 0; }
 
 /* ---- plat.h */
 int plat_ble_state(void) { return BLE_OFF; }

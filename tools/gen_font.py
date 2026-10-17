@@ -59,6 +59,10 @@ import os  # noqa: E402
 FONTSET = os.environ.get("X0X_FONTSET", "barlow")    # the others need X0X_FONT_DIRS (not in assets/)
 FONTDIRS = [Path(p) for p in os.environ.get("X0X_FONT_DIRS", "").split(":") if p]
 SIZES = FONTSETS[FONTSET]
+# FM1_FONT_FULL="L M": those roles with every printable character (lower case too), for an app that writes words in
+# them (fm1.toml font_full; the others keep the set's range)
+FULL = set(os.environ.get("FM1_FONT_FULL", "").split())
+SIZES = [(n, f, px, sc, pix, first, 126 if n in FULL else last) for n, f, px, sc, pix, first, last in SIZES]
 PAD = 2
 
 
