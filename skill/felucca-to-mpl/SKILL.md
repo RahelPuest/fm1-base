@@ -45,8 +45,7 @@ decide what the port (3) may contain, so don't start porting first.
 ### 1. Inventory: where each file came from
 
 1. Get the project (the user's checkout) and a fresh Felucca:
-   `git clone https://github.com/hugelton/Felucca`. Use a fresh clone, not an old one: Felucca's history was
-   rewritten once, and an old copy gives the check the wrong authors.
+   `git clone https://github.com/hugelton/Felucca`.
 2. Get fm1-base with its submodule: `git clone --recursive https://github.com/charlesvestal/fm1-base`.
 3. Run the provenance check from fm1-base:
 
