@@ -42,6 +42,11 @@ decide what the port (3) may contain, so don't start porting first.
    whose they are (Leo's, or a contributor's pull request: Leo applied many under his own name, so `git blame`
    alone would hide them). `--lines` shows the lines. It needs `gh` (GitHub's CLI) to fetch the credited pull
    requests once.
+
+   Reading the report: lines that are also in felucca-bsp or fm1-base count as allowed, so the project's copies of
+   Felucca's platform (`hal/`, `usb.c`, `lcd.c`...) often come out clean. They are dropped all the same (the table
+   below says by kind, not by the report). Short shell boilerplate (`cd "$(dirname "$0")"`, the toolchain's
+   default paths) shows up in `build.sh`; ask the user whether it matters to them rather than rewriting it unasked.
 4. Sort every file of PROJECT into one of these (write the table down; it becomes `LICENSING.md` later):
 
    | Kind | What happens to it |
@@ -67,13 +72,18 @@ Agree the list with the user before porting.
 Make the new repository (a new one, not a fork of Felucca's), with fm1-base as `base/` and the app in `app/`, the
 way CTL-1 and Radio are laid out. Then follow [PORTING.md](PORTING.md): the app contract (`app.h`), `fm1.toml`, the
 platform interface (`include/plat.h`), the build, the simulator, and the device. Keep the firmware's package identity
-(`id_prefix`) if it already has releases, so the new firmware installs over the old one as an update.
+(`id_prefix`) and its store objects' flash offsets (`APP_STORE_MAP`) if it already has releases, so the new firmware
+installs over the old one as an update and keeps what players saved. Work on a branch of the firmware's repository
+(or a new one), and leave the released code alone until the user has tried the port on an FM-1.
 
 ### 4. Check it
 
 - `python3 base/tools/provenance.py . Felucca` reports nothing but a few single lines, and those are checked by
   hand. A clean report is necessary, not sufficient: it finds copies, not rewrites that follow the original too
   closely. Review rewritten files with that in mind.
+- A rewritten piece behaves as before: run the app's scenarios in the host simulator before and after the rewrite
+  and compare what they render (audio, screenshots) byte for byte. A generative or random part must give the same
+  sequence. Don't call a rewrite done on "it sounds right".
 - The build is clean (`./build.sh`), the tests pass, the host simulator runs the app, and it runs on an FM-1:
   boot, screen, keys, sound, MIDI, saving, an update over USB, and Bluetooth or WiFi if it has them.
 - fm1-base's build prints a note if any function has a 64-bit multiply inlined beside a load. On the FM-1 such code
@@ -83,7 +93,8 @@ platform interface (`include/plat.h`), the build, the simulator, and the device.
 
 - `LICENSE`: the MPL-2.0 text. An SPDX line (`SPDX-License-Identifier: MPL-2.0`) and the author's copyright at the
   top of every file of the app.
-- `LICENSING.md`: the table from step 1, as it is now: what each part is, where it came from, its licence (see
+- `LICENSING.md`: say that the versions before the move stay under the GPL, and give the table from step 1, as it
+  is now: what each part is, where it came from, its licence (see
   CTL-1's and Radio's for the form). Third-party code with its licence file beside it.
 - `README.md` credits: fm1-base and felucca-bsp, "from Felucca by Leo Kuroshita (Hügelton Instruments)"; the
   third-party code. No Felucca, M-VAVE or Hügelton names in the product's name.

@@ -51,6 +51,28 @@ What is left of a Felucca fork after that is its app: its sound (engines, effect
 format, MIDI handling. The parts the author wrote stay (they move into `app/`). The parts that came from Felucca are
 the skill's "not kept" row: replaced or written again.
 
+## A firmware on X0X's or FoMni-1's platform
+
+Most FM-1 firmwares were started from X0X or FoMni-1, not from Felucca's tree: `firmware/src/app/` holds `plat.h`,
+`plat_fm1.c`, `panel.c`, `main_fm1.c` and the app (`ui.c`, `project.c`, `dsp/`), and `host/` its simulator. fm1-base's
+`include/plat.h` is the same interface, grown, so such an app moves almost as it is (AMB-1 did: one glue file, a
+few renames):
+
+| Was | On fm1-base |
+| --- | --- |
+| `EN_POOL` / `EN_HOST` (or the firmware's own prefix) | `PLAT_POOL` / `PLAT_HOST` (a DSP file also built on its own, e.g. for a web app, can test both) |
+| `plat_midi_in(&pkt)` | `plat_midi_in(&pkt, &port)` (port may be 0) |
+| `main_fm1.c`'s calls: the engine's init, `project_load`, `ui_init`, `ui_frame`, the render | `app/app.c`: `app_init`, `app_ui_init`, `app_frame`, `app_input_only`, `app_render`, `app_panic`, `app_say` calling the app's own (see CTL-1's `app/app.c`) |
+| callbacks `plat_fm1.c` gave the app (e.g. an engine's MIDI out) | defined in `app/app.c` |
+| `#include "../dsp/fastmath.h"` | `#include "fastmath.h"` (fm1-base's `include/`) |
+| `assets/fonts/`, `fastmath.h` | fm1-base's: delete the app's copies once `cmp` says they are the same |
+| the simulator's own checks and commands (`host/*_host.c`) | `app/host.c`: `app_expect`, `app_host_cmd`, `app_host_reboot`, `app_speak_dump`, each announced in `app.h` (`APP_HOST_EXPECT`...); fm1-base's commands cover the rest (`said_none` is `unsaid`) |
+| `tests/run_tests.sh` | a top-level `tests/run_tests.sh` as CTL-1's: the app's own tests, the scenarios on `app/build/host/NAME_host`, the update path against `app/build/NAME.fwsc` |
+| `web/words/*.json` (published words files) | `app/web/words/`: keep every published one; the build writes the current one there, with the same name if the words did not change |
+
+`fm1.toml` takes the rest: `name`, `id_prefix`, the USB names, `ble = false` for a firmware without the radio,
+`usb_audio_in` if the old build was recordable over USB, `include = ["dsp"]`, `o2` for the DSP built at -O2.
+
 ## The app contract
 
 `app.h` (see the template's) defines the app's settings and declares what the platform calls:
@@ -87,12 +109,17 @@ DSP units built at -O2), `ble`, `ble_central`, `wifi`, `usb_audio_in` / `usb_aud
    app (`(volatile uint32_t *)`, inline assembly) outside the BSP.
 4. No `double`: the FPU is single precision, and the build fails on the soft-double routines. No libm: use
    `fastmath.h`.
-5. Run the host simulator (`./build.sh --host`, then the app's `tests/*.txt` scripts; the template's `tests/` shows
-   the commands), then the browser build (`./build.sh --web`).
-6. Install on an FM-1 (`python3 base/tools/fm1_install.py app/build/NAME.fwsc`) and check it: boot, screen, every
+5. Run the host simulator (`./build.sh --host`, then the app's scenarios; the template's `tests/` shows the
+   commands), then the browser build (`./build.sh --web`). Build with a Python whose Pillow has libraqm
+   (`PYTHON=/opt/homebrew/bin/python3...`): the fonts need it.
+6. Build the firmware again (`./build.sh`: the test run builds the simulator and the emulator, not the package),
+   install it on an FM-1 (`python3 base/tools/fm1_install.py app/build/NAME.fwsc`) and check it: boot, screen, every
    button and knob, the keys, sound, MIDI in and out, a setting saved across a power cycle, an update from the
    firmware itself, Bluetooth or WiFi if it has them. `base/tools/fm1_remote.py` drives it over USB (`screen`,
-   `log`, `tap`, `turn`, `key`).
+   `log`, `tap`, `turn`, `key`). Check the sound without playing it aloud: record the FM-1's USB audio on the
+   computer (e.g. `ffmpeg -f avfoundation -i ":N" -t 10 out.wav`), with `fm1_remote.py master 2048` (USB audio is
+   after MASTER; `master pot` gives it back), and compare its level with the simulator's render. Then the user
+   listens on the FM-1 itself.
 
 Felucca's safety stays, from fm1-base: the boot guard (two failed starts: safe mode with USB on), the crash screen
 and record, the watchdog, OCT- and OCT+ held 5 s for update mode, and the installer's way back to M-VAVE's firmware.
