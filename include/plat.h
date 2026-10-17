@@ -205,6 +205,10 @@ uint32_t plat_xruns(void);
  *   APP_USB_CMD     void app_usb_cmd(const uint8_t *d, uint32_t n)   a frame in the update's framing (above). Main loop
  *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
+ *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
+ *                   set up (registers only, no RAM): an app's second core that a reset left running, held
+ *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
+ *                   second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app

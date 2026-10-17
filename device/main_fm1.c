@@ -578,6 +578,9 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+#ifdef APP_FAULT
+    app_fault(c);                                   /* the app's first (its second core: given up, or this is it) */
+#endif
     fm1_audio_stop();
     lcd_fill(0, 0, 240, 240, RGB(160, 0, 0));
     draw_text_box(0, 8, 240, &FONT_S, APP_NAME " CRASH", C_WHITE, 1);
@@ -860,6 +863,10 @@ static void fm1_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d, p3, src, wdt;
+#ifdef APP_CSTART
+    app_cstart();                                   /* the app's, before the RAM is cleared (registers only: a second
+                                                     * core a reset left running, held) */
+#endif
     fm1_time_init();
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;

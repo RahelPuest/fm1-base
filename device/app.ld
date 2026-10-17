@@ -29,8 +29,10 @@ SECTIONS
                 .ble_rf_code .bt_rf_code .hci_interface_code .vendor_manager_code .device_manager_code)
               *(.*_const)
               . = ALIGN(4); _etext = .; } > XIP
+    /* .c1_text: an app's second core's RAM loop (tools/build.py), copied and guarded with the rest */
     .ram_text : { _rt_start = .; KEEP(*(.ram_text*)) *(.volatile_ram_code) *(*.rf.text.cache.L2.rf_trim)
-                  . = ALIGN(4); _rt_end = .; } > RAMTEXT AT > XIP
+                  . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .;
+                  _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) *(.*_data) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
