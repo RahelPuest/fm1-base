@@ -21,6 +21,8 @@ struct fm1b_dbg {
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
+static uint8_t rails_boot[2], rails_tries;          /* VDC14's and SYSVDD's registers as the boot loader left them, and
+                                                     * the raises it took to read back M-VAVE's levels (the log) */
 static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
                                                                   * 2 Bluetooth, 3 the app's loop, 4 USB, 5 a frame,
                                                                   * 6 input (fm1b_dbg.stage) */
@@ -186,8 +188,8 @@ static void hexs(char *b, uint32_t v)
 }
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
- * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), then Bluetooth's log, the oldest
- * first (it survives a reset) */
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), then
+ * Bluetooth's log, the oldest first (it survives a reset) */
 static void log_line_send(const char *t)
 {
     uint8_t f[48];
@@ -263,6 +265,28 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
     } else {
         log_line_send("no crash recorded");
+    }
+    {   /* the supplies: as the boot loader left them, the raises, and now (raw registers: a broken read shows) */
+        static const char H[] = "0123456789ABCDEF";
+        uint8_t v[4] = {rails_boot[0], rails_boot[1], fm1_p33_read(FM1_P3_ANA_CON6), fm1_p33_read(FM1_P3_ANA_CON9)};
+        char r[40], *q = r;
+        const char *t = "rails boot ";
+        uint32_t j;
+        while (*t)
+            *q++ = *t++;
+        for (j = 0; j < 4u; j++) {
+            if (j == 2u) {
+                for (t = "now "; *t; )
+                    *q++ = *t++;
+            }
+            *q++ = H[v[j] >> 4];
+            *q++ = H[v[j] & 15u];
+            *q++ = ' ';
+        }
+        *q++ = 'x';
+        *q++ = (char)('0' + rails_tries);
+        *q = 0;
+        log_line_send(r);
     }
     if (wdt_stage) {
         static const char *const ST[7] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input"};
@@ -612,8 +636,15 @@ static void fm1_main(void)
     uint32_t last_frame = 0;
     {
         uint32_t f = irq_save();
-        fm1_vdc14_raise(7);                         /* M-VAVE's own supplies before anything loads them: 1.60 V, */
-        fm1_sysvdd_raise(15);                       /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
+        rails_boot[0] = fm1_p33_read(FM1_P3_ANA_CON6);
+        rails_boot[1] = fm1_p33_read(FM1_P3_ANA_CON9);
+        for (rails_tries = 1; ; rails_tries++) {
+            fm1_vdc14_raise(7);                     /* M-VAVE's own supplies before anything loads them: 1.60 V, */
+            fm1_sysvdd_raise(15);
+            if ((fm1_vdc14() == 7u && fm1_sysvdd() == 15u) || rails_tries == 3u)
+                break;                              /* (read back: a raise that did not take is tried again) */
+        }
+                                                    /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
                                                      * come back corrupted under load: the radio's trim crashed
                                                      * CTL-1 0.6 s into most Bluetooth starts */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */

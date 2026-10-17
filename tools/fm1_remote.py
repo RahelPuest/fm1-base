@@ -12,7 +12,8 @@ or by a program (an agent). Needs mido with python-rtmidi.
     wait MS                                 let it run (with listen: print what it says meanwhile)
     listen                                  a screen reader starts listening: every message it says is printed
     screen                                  what is on the screen, in words (the screen reader's channel)
-    log                                     the last crash, the registers at the last four, and the radio's log
+    log                                     the last crash, the registers at the last four, the supplies, and the
+                                            radio's log
                                             (all survive a restart)
     release-all                             every button and key up, MASTER the pot's own
     wifi on | wifi off | wifi scan          WiFi (a firmware with wifi = true): on, off, look for networks
