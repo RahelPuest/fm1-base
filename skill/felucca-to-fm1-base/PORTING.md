@@ -125,6 +125,40 @@ DSP units built at -O2), `ble`, `ble_central`, `wifi`, `usb_audio_in` / `usb_aud
 Felucca's safety stays, from fm1-base: the boot guard (two failed starts: safe mode with USB on), the crash screen
 and record, the watchdog, OCT- and OCT+ held 5 s for update mode, and the installer's way back to M-VAVE's firmware.
 
+## What fm1-base has for features a fork may have added
+
+Before writing a feature into the app, look for it in fm1-base (`include/plat.h`, `tools/build.py`'s header):
+
+| A fork's own | fm1-base |
+| --- | --- |
+| its screen and panel on a computer, the panel played from it | `mirror = true` (device/mirror.c, web/mirror, tools/fm1_mirror.py); `APP_REDRAW`, `APP_MIRROR_TEST` |
+| a backup of its saved objects over USB | `backup = true` (device/backup.c, web/backup, tools/fm1_backup.py): `APP_BACKUP_OBJS`, `_MAGIC`, `_VERSION`, `app_backup_*`; keep the fork's magic and version and its old backups restore |
+| its own commands in the update's SysEx framing, data pulled from the host | `APP_USB_CMD` (`app_usb_cmd`), `plat_host_read`, `plat_host_patience` |
+| big data in flash beyond the store | `plat_data`, `plat_data_erase`, `plat_data_write`: the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`) |
+| a store object read whole or not at all; its header only | `plat_store_size`, `plat_store_head` (`plat_store_load` cuts an object longer than its buffer short) |
+| room in the MIDI out queue, a new USB connection | `plat_midi_out_room(to)`, `plat_midi_out_link()` |
+| dim keys, PLAY's green LED | `plat_lights` |
+| USB audio at full level, MASTER for the speaker only | `plat_usb_audio_full` |
+| lower case in the big fonts | `font_full = ["L"]` |
+| its own exports in the browser build | `APP_WEB` (the app's `web.c`), and its own page in `app/web/emu/` |
+
+## Comparing with the old simulator
+
+The skill's step 4 compares what the scenarios write on the fork's old simulator and on fm1-base's, byte for byte.
+Differences that come from the simulators, not from the port, seen so far (each proved by matching it in the old one):
+
+- **Command timing**: fm1-base's `midi` runs 2 ms after the message, `master` 40 ms, `where` 40 ms; a fork's may run
+  none or more. Add the `wait` to the old run, or to the scenario (a scenario timed to the old simulator: give it the
+  wait it had).
+- **MASTER's gain**: fm1-base passes the render `APP_GAIN(position)`, by default the square; a fork's simulator may
+  have taken the script's number as the gain. Compare with the new simulator built with the old convention, the code
+  untouched: `CC` a wrapper that runs `cc "-DAPP_GAIN(m)=(m)" "$@"`.
+- **Logs**: fm1-base's MIDI log names the port (" -> USB"); strip it before comparing.
+- **The fork's simulator's shortcuts**: a backup image it wrote with another version number, a setting it never
+  simulated (USB audio full): explain each, and prefer the device's behaviour.
+- **Headers on the host**: an app directory of stub C library headers for the device (a vendored library's) goes in
+  `device_include`, not `include`, or it hides the host's own.
+
 ## Bluetooth and WiFi
 
 These are the reason to move. Turn them on in `fm1.toml` (`ble = true`, or `wifi = true`; not both yet). fm1-base's

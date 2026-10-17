@@ -32,9 +32,17 @@ parts it has.
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
 | WiFi: a station on the networks around, with lwIP's sockets | `wifi = true` (not with `ble`, yet), and `net = [...]` for the app's network code | `plat_wifi_on`, `plat_wifi_state`, `plat_wifi_scan`, `plat_wifi_found`, `plat_wifi_join`, `plat_wifi_saved`, `plat_wifi_forget`, `plat_net_task` |
 | A page for Bluetooth MIDI devices: the scan while it's up, the list, SAVE to connect or let go, and what happened in words | `#define APP_BTDEV` in app.h, with `ble_central` | `btdev_page`, `btdev_event`, `btdev_word`, `btdev_found`, `btdev_choose`, `btdev_save`, `btdev_title` (lib/btdev.h) |
+| USB audio at full level, MASTER for the speaker and headphones only | with the USB audio input | `plat_usb_audio_full` (the app's setting) |
+| Screen mirroring: the screen and panel live on a computer (web/mirror, a PNG with `tools/fm1_mirror.py`), the panel played from it | `mirror = true` | nothing; `APP_REDRAW` (what a slow link dropped, drawn again), `APP_MIRROR_TEST` (a test session from the remote) |
+| Backup and restore of the app's saved objects over USB, all or nothing (web/backup, `tools/fm1_backup.py`) | `backup = true` | app.h: `APP_BACKUP_OBJS`, `APP_BACKUP_MAGIC`, `APP_BACKUP_VERSION`, `APP_BACKUP_WHAT`; `app_backup_playing`, `_flush`, `_hold`, `_restored` |
+| The app's own commands over USB, in the update's framing, data pulled from the host | `#define APP_USB_CMD` in app.h | `app_usb_cmd`; `plat_host_read`, `plat_host_patience` |
+| Lower case in the big fonts | `font_full = ["L"]` | the fonts as ever |
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
+And: `plat_midi_out_room(to)` (room in the out queues, for a sequencer's note-offs) and `plat_midi_out_link()` (a new
+USB connection); `plat_store_size` and `plat_store_head` (an object whole or not at all; its header only); big data in
+flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`).
 
 ## Bluetooth and WiFi
 
@@ -116,14 +124,17 @@ survives a restart, not switching off.
 
 ## Moving a Felucca-based firmware here
 
-Felucca is GPL-3.0; a firmware moved onto fm1-base becomes MPL-2.0 only if it keeps nothing from Felucca except what
-felucca-bsp and fm1-base already carry. `skill/felucca-to-mpl/` is a Claude skill that walks through the move: the
-inventory (`tools/provenance.py` finds Felucca's lines and whose they are), what has to be written again, the port
-onto fm1-base, and the licensing files. For the rule itself, see `skill/felucca-to-mpl/RULES.md`. To move a firmware with
-Claude Code, run this from inside its repository (Node.js's `npx` fetches the skill into the project):
+A Felucca-based firmware (GPL-3.0) can move onto fm1-base and felucca-bsp and keep its licence: their MPL-2.0 files
+may be part of a GPL work, and stay MPL-2.0 file by file. It then has the platform's parts and fixes with every other
+firmware, instead of its own copy of Felucca. `skill/felucca-to-fm1-base/` is a Claude skill that walks through the
+move: the inventory (what is platform, what is the app), what fm1-base needs, the port, the checks (the app's
+scenarios compared byte for byte with the old simulator's, then the FM-1), and the licensing files. It never changes
+the firmware's licence: it asks. Relicensing to MPL-2.0 is needed only to link JieLi's Bluetooth or WiFi libraries;
+`skill/felucca-to-fm1-base/RULES.md` has what it takes (`tools/provenance.py` finds Felucca's lines and whose they
+are). To move a firmware with Claude Code, run this from inside its repository (Node.js's `npx` fetches the skill
+into the project):
 
-    npx degit --force charlesvestal/fm1-base/skill/felucca-to-mpl .claude/skills/felucca-to-mpl && claude "Move this firmware to MPL-2.0 with the felucca-to-mpl skill"
+    npx degit --force charlesvestal/fm1-base/skill/felucca-to-fm1-base .claude/skills/felucca-to-fm1-base && claude "Move this firmware onto fm1-base with the felucca-to-fm1-base skill"
 
 Claude starts with the inventory and shows it before changing anything. To have the skill in every project instead,
-fetch it to `~/.claude/skills/felucca-to-mpl`. It reads as plain instructions too,
-without Claude.
+fetch it to `~/.claude/skills/felucca-to-fm1-base`. It reads as plain instructions too, without Claude.

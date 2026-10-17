@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 """Where a project's lines came from in Felucca: the check for moving a Felucca-based firmware onto felucca-bsp and
-fm1-base (fm1-base's skill/felucca-to-mpl).
+fm1-base, for a firmware whose author relicenses it to MPL-2.0 (fm1-base's skill/felucca-to-fm1-base, RULES.md).
 
   tools/provenance.py PROJECT FELUCCA [--allow DIR ...] [--rev REV] [--prs 2,8,...] [--min 12] [--files GLOB]
                       [--lines]
