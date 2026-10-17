@@ -6,13 +6,15 @@ a host simulator and a browser emulator that run the same app, and the tools to 
 MPL-2.0: an app built on it may use any licence. See [DESIGN.md](DESIGN.md), [LICENSING.md](LICENSING.md) and
 [CREDITS.md](CREDITS.md).
 
-Status: assembled from the platform layer of the FM-1 firmwares (FoMni-1, X0X, CTL-1 and others). The template
-(`tools/build.py template`) runs on an FM-1 (2026-10-16): screen, keys and their LEDs, the glow, sound, MASTER,
-encoders, settings saved across a power cycle, USB-MIDI both ways, the screen reader, the USB names, and an update
-started from the template itself (felucca-bsp's loader). The host simulator runs any app
-(`tools/build.py template --host`, then `template/build/host/template_host template/tests/basic.txt`), and in the browser (`tools/build.py template --web`:
-the simulator alone, panel, screen, sound and screen reader, for a firmware's site to link). Not yet moved over: the
-optional interface groups.
+**Status: beta.** Two firmwares are built on it so far, and they are its proof points:
+[CTL-1](https://github.com/charlesvestal/fm1-ctl) (with Bluetooth MIDI) and
+[Radio](https://github.com/charlesvestal/fm1-radio) (with WiFi). Expect the platform interface (`include/plat.h`)
+and `fm1.toml`'s settings to change before 1.0.
+
+The template (`template/`) runs on an FM-1: screen, keys and their LEDs, sound, MASTER, encoders, settings kept
+across a power cycle, USB-MIDI both ways, the screen reader, and an update started from the template itself. The same
+app runs on the computer in the host simulator and in the browser: try the template's at
+<https://charlesvestal.github.io/fm1-base/emu/>.
 
     git clone --recursive https://github.com/charlesvestal/fm1-base
 
