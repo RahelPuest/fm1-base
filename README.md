@@ -110,6 +110,9 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
   576 KB, 127 KB and 300 KB.
 - In a WiFi build, fm1-base's large font (the splash's name, the panel's screens) can go too:
   `#define APP_BIG_FONT FONT_M` in app.h saves 20 KB of flash.
+- An app with fonts of its own can give them to fm1-base's screens (crash, safe mode, update, restore,
+  calibration, the splash): `#define APP_SYS_TEXT` in app.h and its `app_sys_h`, `app_sys_w`, `app_sys_text`
+  (`device/sys_text.c`); fm1-base's faces are then left out (LOOM-8: 18 KB).
 
 ## Development over USB
 
