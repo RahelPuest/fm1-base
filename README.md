@@ -124,5 +124,6 @@ Claude Code, put it in your skills with one command (Node.js's `npx`; add `--for
 
     npx degit charlesvestal/fm1-base/skill/felucca-to-mpl ~/.claude/skills/felucca-to-mpl
 
-then ask Claude to move your firmware to MPL-2.0 (or type `/felucca-to-mpl`). It reads as plain instructions too,
+(or, from inside your firmware's repository, `.claude/skills/felucca-to-mpl` as the last part: the skill for that
+project only), then ask Claude to move your firmware to MPL-2.0 (or type `/felucca-to-mpl`). It reads as plain instructions too,
 without Claude.
