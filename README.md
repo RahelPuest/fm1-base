@@ -120,8 +120,9 @@ Felucca is GPL-3.0; a firmware moved onto fm1-base becomes MPL-2.0 only if it ke
 felucca-bsp and fm1-base already carry. `skill/felucca-to-mpl/` is a Claude skill that walks through the move: the
 inventory (`tools/provenance.py` finds Felucca's lines and whose they are), what has to be written again, the port
 onto fm1-base, and the licensing files. For the rule itself, see `skill/felucca-to-mpl/RULES.md`. To use it with
-Claude Code, copy (or link) the folder into your skills, then ask Claude to move your firmware to MPL-2.0:
+Claude Code, put it in your skills with one command (Node.js's `npx`; add `--force` to update it later):
 
-    cp -r skill/felucca-to-mpl ~/.claude/skills/
+    npx degit charlesvestal/fm1-base/skill/felucca-to-mpl ~/.claude/skills/felucca-to-mpl
 
-It reads as plain instructions too, without Claude.
+then ask Claude to move your firmware to MPL-2.0 (or type `/felucca-to-mpl`). It reads as plain instructions too,
+without Claude.
