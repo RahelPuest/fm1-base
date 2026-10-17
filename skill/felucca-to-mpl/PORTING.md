@@ -51,27 +51,27 @@ What is left of a Felucca fork after that is its app: its sound (engines, effect
 format, MIDI handling. The parts the author wrote stay (they move into `app/`). The parts that came from Felucca are
 the skill's "not kept" row: replaced or written again.
 
-## A firmware on X0X's or FoMni-1's platform
+## A fork whose app is already apart from its platform
 
-Most FM-1 firmwares were started from X0X or FoMni-1, not from Felucca's tree: `firmware/src/app/` holds `plat.h`,
-`plat_fm1.c`, `panel.c`, `main_fm1.c` and the app (`ui.c`, `project.c`, `dsp/`), and `host/` its simulator. fm1-base's
-`include/plat.h` is the same interface, grown, so such an app moves almost as it is (AMB-1 did: one glue file, a
-few renames):
+Some forks already keep their app (UI, engine, saved data) apart from the hardware code, behind an interface of their
+own: functions for buttons, keys, encoders, LEDs, MIDI and storage, and a main loop that calls the app. Such an app
+usually moves with little change, because fm1-base's `include/plat.h` came from the same Felucca code. Map the fork's
+interface onto fm1-base's, one function at a time:
 
-| Was | On fm1-base |
+| In the fork | On fm1-base |
 | --- | --- |
-| `EN_POOL` / `EN_HOST` (or the firmware's own prefix) | `PLAT_POOL` / `PLAT_HOST` (a DSP file also built on its own, e.g. for a web app, can test both) |
-| `plat_midi_in(&pkt)` | `plat_midi_in(&pkt, &port)` (port may be 0) |
-| `main_fm1.c`'s calls: the engine's init, `project_load`, `ui_init`, `ui_frame`, the render | `app/app.c`: `app_init`, `app_ui_init`, `app_frame`, `app_input_only`, `app_render`, `app_panic`, `app_say` calling the app's own (see CTL-1's `app/app.c`) |
-| callbacks `plat_fm1.c` gave the app (e.g. an engine's MIDI out) | defined in `app/app.c` |
-| `#include "../dsp/fastmath.h"` | `#include "fastmath.h"` (fm1-base's `include/`) |
-| `assets/fonts/`, `fastmath.h` | fm1-base's: delete the app's copies once `cmp` says they are the same |
-| the simulator's own checks and commands (`host/*_host.c`) | `app/host.c`: `app_expect`, `app_host_cmd`, `app_host_reboot`, `app_speak_dump`, each announced in `app.h` (`APP_HOST_EXPECT`...); fm1-base's commands cover the rest (`said_none` is `unsaid`) |
-| `tests/run_tests.sh` | a top-level `tests/run_tests.sh` as CTL-1's: the app's own tests, the scenarios on `app/build/host/NAME_host`, the update path against `app/build/NAME.fwsc` |
-| `web/words/*.json` (published words files) | `app/web/words/`: keep every published one; the build writes the current one there, with the same name if the words did not change |
+| its own interface header and the code behind it (the device side, the simulator side) | `include/plat.h`; the fork's copies are dropped. Where a name or signature differs (`plat_midi_in` takes a port, the pool and host macros are `PLAT_POOL` and `PLAT_HOST`), change the app's calls |
+| the main loop's calls into the app (its init, the saved data's load, the UI's frame, the render) | `app/app.c`: `app_init`, `app_ui_init`, `app_frame`, `app_input_only`, `app_render`, `app_panic`, `app_say` call the app's own functions (CTL-1's `app/app.c` is one) |
+| callbacks the fork's device code gave the app | defined in `app/app.c` |
+| its copies of shared helpers or assets (`fastmath.h`, fonts) | fm1-base's: delete the app's copies once `cmp` shows they are the same; where they differ, keep the app's under its own name |
+| its simulator's own checks and commands | `app/host.c`: `app_expect`, `app_host_cmd`, `app_host_reboot`, `app_speak_dump`, each announced in `app.h` (`APP_HOST_EXPECT`...); fm1-base's simulator has the common commands (`base/host/plat_host.c`, at the top) |
+| published screen reader words files, if it has any | `app/web/words/`: keep every published one |
 
-`fm1.toml` takes the rest: `name`, `id_prefix`, the USB names, `ble = false` for a firmware without the radio,
-`usb_audio_in` if the old build was recordable over USB, `include = ["dsp"]`, `o2` for the DSP built at -O2.
+`fm1.toml` takes the rest: `name`, `id_prefix`, the USB names, `ble` and `wifi`, `usb_audio_in` / `usb_audio_out` as
+the old build had them, `include` for the app's own directories, `o2` for its DSP at -O2.
+
+A fork whose app and platform are mixed in the same files needs more: separate what the author wrote from Felucca's
+code first (the provenance report shows which lines are Felucca's), then move the author's part.
 
 ## The app contract
 
