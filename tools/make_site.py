@@ -11,13 +11,19 @@
   manual/index.html, img/     the manual (APP_DIR/docs/MANUAL.md, its images from APP_DIR/docs/img), if there is one
   emu/                        the firmware in the browser (APP_DIR/build/emu: tools/build.py APP_DIR --web)
   words/                      the screen reader's words files (APP_DIR/web/words), every one ever made
+  mirror/index.html           the screen mirror (web/mirror/index.html), with mirror = true
+  backup/index.html           backup and restore in the browser (web/backup/index.html), with backup = true: its
+                              magic and version from APP_DIR/app.h (APP_BACKUP_MAGIC, APP_BACKUP_VERSION)
   firmware/NAME-VERSION.fwsc  the package the installer writes; also the download
 
   tools/make_site.py APP_DIR APP_DIR/build/NAME-VERSION.fwsc VERSION OUT_DIR
 
 The package must be a release build (tools/build.py APP_DIR --release VERSION): its identity, fm1.toml's id_prefix and
 six digits, is what the installer checks the download against and what the FM-1 reports after the install. From
-fm1.toml: name, tagline, repo (the source's URL), licence, credits (a sentence for the installer's footer)."""
+fm1.toml: name, tagline, repo (the source's URL), licence, credits (a sentence for the installer's footer); with
+backup = true, backup_ext (the files' extension, default "bak") and backup_holds (what a backup holds, a phrase for
+the page: "the songs and the settings"). tool_pages(APP_DIR) gives those two pages filled in, for a firmware's own
+site tool."""
 import json
 import re
 import shutil
@@ -41,6 +47,45 @@ def strip_module(src):
 def product_of(raw):
     """the package identity: one marker byte after each of the first 20 blocks (fm1pkg.js productOf)"""
     return "".join(chr((m - i - 1) & 0xFF) for i in range(BLOCKS) if (m := raw[i * BLK + KEEP]) != 0x7D)
+
+
+def fill(html, values, what):
+    """a page's {{KEY}}s filled in; every one must be"""
+    for key, val in values.items():
+        html = html.replace("{{" + key + "}}", val)
+    left = sorted(set(re.findall(r"\{\{[A-Z_]+\}\}", html)))
+    if left:
+        raise SystemExit(f"{what}: {' '.join(left)} not filled in")
+    return html
+
+
+def backup_values(app, conf):
+    """the backup page's values: the app's magic and version (app.h), the name, the identity, the files"""
+    src = (Path(app) / "app.h").read_text(encoding="utf-8")
+    m = re.search(r"#define\s+APP_BACKUP_MAGIC\s+0x([0-9A-Fa-f]{8})u?", src)
+    v = re.search(r"#define\s+APP_BACKUP_VERSION\s+(\d+)u?", src)
+    if not m or not v:
+        raise SystemExit(f"{app}/app.h: backup = true needs APP_BACKUP_MAGIC 0x........u and APP_BACKUP_VERSION N")
+    magic = int(m.group(1), 16).to_bytes(4, "little").decode("ascii")
+    name = conf.get("name", Path(app).name)
+    return {"NAME": name, "ID": conf.get("id_prefix", ""), "MAGIC": magic, "BACKUP_VERSION": v.group(1),
+            "EXT": conf.get("backup_ext", "bak"), "HOLDS": conf.get("backup_holds", f"everything {name} saves"),
+            "EXTRA": ""}
+
+
+def tool_pages(app, conf=None, values=None):
+    """{"mirror/index.html": html, "backup/index.html": html}, as fm1.toml asks (mirror, backup), filled in; values:
+    the firmware's own, over the defaults (EXTRA: its notes)"""
+    app = Path(app).resolve()
+    conf = conf or read_conf(app / "fm1.toml")
+    out = {}
+    if conf.get("mirror"):
+        out["mirror/index.html"] = fill((SRC / "web" / "mirror" / "index.html").read_text(encoding="utf-8"),
+                                        dict({"NAME": conf.get("name", app.name)}, **(values or {})), "web/mirror")
+    if conf.get("backup"):
+        out["backup/index.html"] = fill((SRC / "web" / "backup" / "index.html").read_text(encoding="utf-8"),
+                                        dict(backup_values(app, conf), **(values or {})), "web/backup")
+    return out
 
 
 def page(md, dst, conf, home):
@@ -103,9 +148,13 @@ def main(app, pkg, version, out):
     shutil.copytree(emu, out / "emu")
     if (app / "web" / "words").is_dir():
         shutil.copytree(app / "web" / "words", out / "words")
+    tools = tool_pages(app, conf)
+    for p, h in tools.items():
+        (out / p).parent.mkdir(parents=True, exist_ok=True)
+        (out / p).write_text(h, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), {'manual/, ' if manual.exists() else ''}emu/, words/, "
-          f"firmware/{name} ({len(raw)} B)")
+          f"{''.join(p.split('/')[0] + '/, ' for p in tools)}firmware/{name} ({len(raw)} B)")
 
 
 if __name__ == "__main__":
