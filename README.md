@@ -113,3 +113,10 @@ For example, `tools/fm1_remote.py listen tap REC wait 3000 screen log`.
 The site's installer page (`tools/make_site.py`, from `web/installer.html`) reads the same crash record and log in
 Chrome or Edge: "Report a problem" shows them, ready to copy, so a player can send them without Python. The record
 survives a restart, not switching off.
+
+## Moving a Felucca-based firmware here
+
+Felucca is GPL-3.0; a firmware moved onto fm1-base becomes MPL-2.0 only if it keeps nothing from Felucca except what
+felucca-bsp and fm1-base already carry. `skill/felucca-to-mpl/` is a Claude skill that walks through the move: the
+inventory (`tools/provenance.py` finds Felucca's lines and whose they are), what has to be written again, the port
+onto fm1-base, and the licensing files. For the rule itself, see `skill/felucca-to-mpl/RULES.md`.
