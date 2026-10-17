@@ -22,7 +22,10 @@ A firmware moved to MPL-2.0 is made of:
    libraries: MIT, BSD, ISC, zlib, Apache-2.0, CC0, public domain, SIL OFL (fonts). Not GPL or LGPL code, which
    would make the firmware GPL again. Each with its licence text and listed in `LICENSING.md`.
 
-Nothing else from Felucca: not its engines, sequencer, UI, MIDI handling, editor or web pages, Leo's included. What
+Leo's permission covers his code as it is in felucca-bsp and fm1-base; it does not relicense Felucca itself. So
+nothing else from Felucca: not its engines, sequencer, UI, MIDI handling, editor or web pages, Leo's included. If
+a firmware needs a part of Felucca that is in neither, ask the maintainers of felucca-bsp and fm1-base whether it
+belongs there; once it is in, it may be used like the rest. What
 the firmware needs of them is replaced by fm1-base's, taken from the upstream library they came from (Felucca's
 third-party parts are listed in its `LICENSING.md` and `CREDITS.md`: take those from their own repositories, under
 their own licences), or written again.

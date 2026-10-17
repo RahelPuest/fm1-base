@@ -110,15 +110,15 @@ DSP units built at -O2), `ble`, `ble_central`, `wifi`, `usb_audio_in` / `usb_aud
 4. No `double`: the FPU is single precision, and the build fails on the soft-double routines. No libm: use
    `fastmath.h`.
 5. Run the host simulator (`./build.sh --host`, then the app's scenarios; the template's `tests/` shows the
-   commands), then the browser build (`./build.sh --web`). Build with a Python whose Pillow has libraqm
-   (`PYTHON=/opt/homebrew/bin/python3...`): the fonts need it.
+   commands), then the browser build (`./build.sh --web`). Build with a Python whose Pillow has libraqm (the fonts
+   need it; on macOS, Homebrew's): `PYTHON=/path/to/python3 ./build.sh`.
 6. Build the firmware again (`./build.sh`: the test run builds the simulator and the emulator, not the package),
    install it on an FM-1 (`python3 base/tools/fm1_install.py app/build/NAME.fwsc`; if the FM-1 drops off USB
    partway, run it again: the update loader finishes the write) and check it: boot, screen, every
    button and knob, the keys, sound, MIDI in and out, a setting saved across a power cycle, an update from the
    firmware itself, Bluetooth or WiFi if it has them. `base/tools/fm1_remote.py` drives it over USB (`screen`,
    `log`, `tap`, `turn`, `key`). Check the sound without playing it aloud: record the FM-1's USB audio on the
-   computer (e.g. `ffmpeg -f avfoundation -i ":N" -t 10 out.wav`), with `fm1_remote.py master 2048` (USB audio is
+   computer with any recorder (ffmpeg: `-f avfoundation -i ":N"` on macOS, `-f alsa -i hw:N` on Linux), with `fm1_remote.py master 2048` (USB audio is
    after MASTER; `master pot` gives it back), and compare its level with the simulator's render. Then the user
    listens on the FM-1 itself.
 

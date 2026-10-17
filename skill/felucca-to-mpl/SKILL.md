@@ -22,6 +22,21 @@ Nothing is carried over from Felucca except what felucca-bsp and fm1-base alread
 Worked examples: CTL-1 (github.com/charlesvestal/fm1-ctl, Bluetooth MIDI) and Radio
 (github.com/charlesvestal/fm1-radio, WiFi). Their `LICENSING.md` files show the result.
 
+## Before you start
+
+- **Who may relicense.** Only the people who wrote the code can put it under MPL-2.0. If the user is not the
+  firmware's author (or not its only author), each author's agreement is needed, on the record, before step 3; until
+  then, stop after steps 1 and 2 and say so.
+- **What it takes to build.** The JieLi toolchain and the AC79 SDK, and on macOS Docker or podman to run the
+  toolchain (fm1-base's `README.md` and `tools/get_toolchain.sh`); Python 3 with Pillow; `gh`, GitHub's command line,
+  signed in (the provenance check reads Felucca's pull requests with it); an FM-1 on USB for step 4. Emscripten and
+  Node.js are optional (the browser builds).
+- **Words used below.** The *package* is the installable firmware file (`.fwsc`); its *identity* (`FM-1_` and
+  digits, set by `id_prefix` in `fm1.toml` and the version) is how the installer and the FM-1 tell firmwares and
+  versions apart. *Store objects* are what a firmware saves in flash, each at a fixed address (`APP_STORE_MAP`).
+  *Scenarios* are scripts the host simulator runs the app with (keys, knobs, checks). A *words file* is what a
+  screen reader says for the firmware's screens, published on its site.
+
 ## The steps
 
 Work through them in order, and tell the user what each one found before going on. The licensing steps (1 and 2)
@@ -30,7 +45,8 @@ decide what the port (3) may contain, so don't start porting first.
 ### 1. Inventory: where each file came from
 
 1. Get the project (the user's checkout) and a fresh Felucca:
-   `git clone https://github.com/hugelton/Felucca` (not an old copy: Felucca's history was republished).
+   `git clone https://github.com/hugelton/Felucca`. Use a fresh clone, not an old one: Felucca's history was
+   rewritten once, and an old copy gives the check the wrong authors.
 2. Get fm1-base with its submodule: `git clone --recursive https://github.com/charlesvestal/fm1-base`.
 3. Run the provenance check from fm1-base:
 
