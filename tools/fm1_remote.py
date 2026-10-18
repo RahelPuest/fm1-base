@@ -162,10 +162,13 @@ class FM1:
                         print("wifi:", f[1:].decode("latin1", "replace"))
                 i += used
             elif c == "release-all":
-                self.btn = self.keys = 0
+                self.btn = self.keys = 0           # a frame at a time: three back to back, the FM-1 may drop one
                 self.buttons()
+                time.sleep(0.03)
                 self.keys_send()
+                time.sleep(0.03)
                 self.sysex(LC + [4, 4097 & 0x7F, 4097 >> 7])
+                time.sleep(0.03)
                 i += 1
             else:
                 raise SystemExit(f"unknown command {c!r}\n\n{__doc__}")
