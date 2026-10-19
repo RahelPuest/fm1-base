@@ -16,6 +16,8 @@
  *   FM1B_CDC 0              USB serial console (a second USB function)
  *   FM1B_UAC 1              USB audio input: the master output, recordable over the cable at 44.1 kHz (checked on an
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
+ *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
+ *                           their time (its 4 KB ring in the app's pool; 5.8 ms more latency)
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app, at MASTER
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
@@ -58,6 +60,7 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
 #include "fm1b_config.h"          /* APP_NAME, APP_VERSION, APP_BLOCK ...: the app's, or the defaults */
+#include "sys_text.c"             /* the faces of the platform's own screens: fm1-base's, or the app's (APP_SYS_TEXT) */
 #define HALF_FRAMES APP_BLOCK     /* the audio half, as felucca-bsp's usb.c expects it */
 
 #define FELUCCA_OTA 1             /* M-UPGRADE update entry: keeps the web installer working */
@@ -77,6 +80,14 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FM1B_UAC_OUT 1            /* the computer plays through the FM-1 (USB audio output) */
 #endif
 #define FELUCCA_UAC_OUT FM1B_UAC_OUT
+#ifndef FM1B_UAC_DEEP
+#define FM1B_UAC_DEEP 0           /* 1: the USB audio input holds a half more (renders past ~40 % of their time
+                                   * otherwise run its ring dry: holds in the recording); its 4 KB ring in the pool */
+#endif
+#define FELUCCA_UAC_DEEP FM1B_UAC_DEEP
+#if FM1B_UAC_DEEP
+#define FELUCCA_UAC_RING_ATTR PLAT_POOL
+#endif
 #ifndef FELUCCA_ID
 #define FELUCCA_ID "FM-1_000"     /* package identity (tools/build.py passes the firmware's) */
 #endif
@@ -154,12 +165,12 @@ static void ota_show(uint32_t step, int32_t code)
 {
     static const char *const STEP[] = {"", "PACKAGE", "CHECK HEAD", "LOADER", "CONFIRM", "RESTART"};
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 92, 240, &FONT_S, "UPDATE", C_WHITE, 1);
+    sys_box(0, 92, 240, SYS_S, "UPDATE", C_WHITE, 1);
     if (step < 9u) {
-        draw_text_box(0, 124, 240, &FONT_S, STEP[step < 6u ? step : 0], C_HI, 1);
+        sys_box(0, 124, 240, SYS_S, STEP[step < 6u ? step : 0], C_HI, 1);
         return;
     }
-    draw_text_box(0, 124, 240, &FONT_S, code == 1 ? "DRY RUN OK" : "FAILED", C_HI, 1);
+    sys_box(0, 124, 240, SYS_S, code == 1 ? "DRY RUN OK" : "FAILED", C_HI, 1);
     fm1_delay_ms(1500);
 }
 static void radio_clean_exit(void);
@@ -255,9 +266,9 @@ static int rs_playing(void) { return app_backup_playing() != 0; }
 static void rs_screen(const char *a, const char *b)
 {
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 92, 240, &FONT_S, a, C_WHITE, 1);
+    sys_box(0, 92, 240, SYS_S, a, C_WHITE, 1);
     if (b)
-        draw_text_box(0, 124, 240, &FONT_S, b, C_HI, 1);
+        sys_box(0, 124, 240, SYS_S, b, C_HI, 1);
 }
 static void rs_begin(void)                          /* a backup is coming: patient now (5 s a read, 2 min in all) */
 {
@@ -278,14 +289,14 @@ static void rs_show(uint32_t pct)
     b[i] = 0;
     if (!pct)
         lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 92, 240, &FONT_S, "RESTORE", C_WHITE, 1);
-    draw_text_box(0, 124, 240, &FONT_S, b, C_HI, 1);
+    sys_box(0, 92, 240, SYS_S, "RESTORE", C_WHITE, 1);
+    sys_box(0, 124, 240, SYS_S, b, C_HI, 1);
 }
 static int rs_ask(void)                             /* SEL yes, HOME no; playing or 60 s: no. The hand's buttons only */
 {
     uint32_t t0 = fm1_ms, was = plat_buttons() & ~mirror_in_buttons() & ~remote.btn;
     rs_screen("RESTORE FROM USB?", "SEL yes   HOME no");
-    draw_text_box(0, 156, 240, &FONT_S, APP_BACKUP_WHAT, C_GRAY, 1);
+    sys_box(0, 156, 240, SYS_S, APP_BACKUP_WHAT, C_GRAY, 1);
     ann_say("Restore from USB? It " APP_BACKUP_WHAT ". SEL: yes. HOME: no.", 0, ANN_NOW | ANN_KEEP);
     while (fm1_ms - t0 < 60000u) {
         uint32_t b = plat_buttons() & ~mirror_in_buttons() & ~remote.btn, down = b & ~was;

@@ -132,7 +132,10 @@ void plat_log(const char *line);
  * write stops everything for a moment (the sound too: no flash reads meanwhile).
  * Two more windows for big data, outside the store: PLAT_XDATA0 (16 KiB, just above the app area) and PLAT_XDATA1
  * (92 KiB, above the update's staging). The update loader clears an update record it finds in the last 256 bytes of
- * a sector there, so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF) */
+ * a sector there (bsp/loader/ldr_core.c: "AT" at bytes 0xF06..0xF07, a nonzero CRC-16 at 0xF00 over the 78 bytes
+ * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
+ * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
+ * bank that has it) */
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
 #define PLAT_XDATA0_LO 0x93000u
@@ -205,6 +208,10 @@ uint32_t plat_xruns(void);
  *   APP_USB_CMD     void app_usb_cmd(const uint8_t *d, uint32_t n)   a frame in the update's framing (above). Main loop
  *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
+ *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
+ *                   set up (registers only, no RAM): an app's second core that a reset left running, held
+ *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
+ *                   second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app

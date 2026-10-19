@@ -57,7 +57,7 @@
  *   unsaid TEXT                  no SAY since the last "said" has TEXT in it: else a failure
  *   speakdump                    every page, value and message as the reader gets them (the app's app_speak_dump)
  * The app may add its own checks for expect (app_expect), the speakdump (app_speak_dump), what a reboot forgets
- * (app_host_reboot) and commands (app_host_cmd: 1 = handled): app.h defines APP_HOST_EXPECT / APP_HOST_SPEAKDUMP /
+ * (app_host_reboot) and commands (app_host_cmd: 1 = handled; the whole line in plat_host_line): app.h defines APP_HOST_EXPECT / APP_HOST_SPEAKDUMP /
  * APP_HOST_REBOOT / APP_HOST_CMD when it has them. With APP_KEY_SENSE, app_host_key(k, vel, press) (vel 0 = up)
  * makes the readings a key gives, from app_host_tick (every millisecond) while plat_sense is on. APP_HOST_FAILS:
  * app_host_fails() is added to the run's failures at its end (the app's own checks made along the way).
@@ -131,6 +131,7 @@ static const uint8_t HOST_WHITE_K[16] = PLAT_WHITE_KEYS, HOST_BLACK_K[11] = PLAT
 /* "spin": encoder steps exactly as given; an app that accelerates its knobs reads this (#ifdef PLAT_HOST) */
 static uint8_t plat_host_exact;
 static const char *plat_host_dir = ".";        /* the run's output directory (an app's commands: "out:NAME") */
+static const char *plat_host_line = "";        /* the script's line being run (an app's command with more words) */
 
 uint32_t plat_ms(void);
 uint32_t plat_buttons(void);
@@ -1197,8 +1198,9 @@ int main(int argc, char **argv)
         lineno++;
         if (line[0] == '#' || sscanf(line, "%31s %255s %63s %63s %63s", cmd, a, b, c, d) < 1)
             continue;
+        plat_host_line = line;
 #ifdef APP_HOST_CMD
-        if (app_host_cmd(cmd, a, b, c, d))          /* the app's own commands (app.h) */
+        if (app_host_cmd(cmd, a, b, c, d))          /* the app's own commands (app.h; more words: plat_host_line) */
             continue;
 #endif
         if (!strcmp(cmd, "wait"))

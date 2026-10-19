@@ -3,8 +3,9 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Felucca memory map.
  * Code + constants execute in place from XIP (app.bin offset 0 = 0x02000120).
- * 0x01C00000..0x01C06000 holds .ram_text (code that must run while the flash
- * is busy: the flash driver); 0x01C06000..0x01C08000 stays for RAM-run debug.
+ * 0x01C00000..0x01C08000 holds .ram_text (code that must run while the flash
+ * is busy: the flash driver; an app's audio code, out of the XIP cache's way). (It was 24 KB, the last 8 KB
+ * kept for RAM-run debug; LOOM-8's note starts took them, 2026-10-19.)
  * RAM  : .data/.bss (96 KiB)
  * POOL : big zero-initialised buffers (FX lines, canvases), section .pool
  * STACKS with 256-byte guard bands; NOINIT survives resets and UBOOT entry.
@@ -12,7 +13,7 @@
 MEMORY
 {
     XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
-    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
+    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x8000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000
     NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
@@ -29,8 +30,10 @@ SECTIONS
                 .ble_rf_code .bt_rf_code .hci_interface_code .vendor_manager_code .device_manager_code)
               *(.*_const)
               . = ALIGN(4); _etext = .; } > XIP
+    /* .c1_text: an app's second core's RAM loop (tools/build.py), copied and guarded with the rest */
     .ram_text : { _rt_start = .; KEEP(*(.ram_text*)) *(.volatile_ram_code) *(*.rf.text.cache.L2.rf_trim)
-                  . = ALIGN(4); _rt_end = .; } > RAMTEXT AT > XIP
+                  . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .;
+                  _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) *(.*_data) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);

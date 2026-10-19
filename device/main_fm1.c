@@ -578,19 +578,22 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+#ifdef APP_FAULT
+    app_fault(c);                                   /* the app's first (its second core: given up, or this is it) */
+#endif
     fm1_audio_stop();
     lcd_fill(0, 0, 240, 240, RGB(160, 0, 0));
-    draw_text_box(0, 8, 240, &FONT_S, APP_NAME " CRASH", C_WHITE, 1);
+    sys_box(0, 8, 240, SYS_S, APP_NAME " CRASH", C_WHITE, 1);
     hexs(b, c->vec);
-    draw_text_box(10, 40, 220, &FONT_S, b, C_WHITE, 0);
+    sys_box(10, 40, 220, SYS_S, b, C_WHITE, 0);
     hexs(b, c->pc);
-    draw_text_box(10, 60, 220, &FONT_S, b, C_WHITE, 0);
+    sys_box(10, 60, 220, SYS_S, b, C_WHITE, 0);
     hexs(b, c->emu);
-    draw_text_box(10, 84, 220, &FONT_S, b, C_WHITE, 0);
+    sys_box(10, 84, 220, SYS_S, b, C_WHITE, 0);
     hexs(b, c->dbg);
-    draw_text_box(10, 102, 220, &FONT_S, b, C_WHITE, 0);
+    sys_box(10, 102, 220, SYS_S, b, C_WHITE, 0);
     hexs(b, c->rets);
-    draw_text_box(10, 120, 220, &FONT_S, b, C_WHITE, 0);
+    sys_box(10, 120, 220, SYS_S, b, C_WHITE, 0);
     t0 = fm1_ticks();
     while ((uint32_t)(fm1_ticks() - t0) < 4000u * 1000u * FM1_TICKS_PER_US)
         ;
@@ -601,7 +604,7 @@ static void enter_uboot(const char *why)
 {
     fm1_audio_stop();
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 110, 240, &FONT_S, why, C_WHITE, 1);
+    sys_box(0, 110, 240, SYS_S, why, C_WHITE, 1);
     fm1_delay_ms(20);
     usb_detach();
     fm1_delay_ms(30);
@@ -618,19 +621,19 @@ static void safe_main(void)
     char b[24];
     uint32_t t0, play;
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 18, 240, &FONT_B, APP_NAME " SAFE MODE", C_HI, 1);
-    draw_text_box(0, 52, 240, &FONT_S, "IT CRASHED TWICE", C_WHITE, 1);
-    draw_text_box(0, 72, 240, &FONT_S, "WHILE STARTING.", C_WHITE, 1);
-    draw_text_box(0, 102, 240, &FONT_S, "NO SOUND. USB IS ON:", C_WHITE, 1);
-    draw_text_box(0, 122, 240, &FONT_S, "REINSTALL FROM THE", C_WHITE, 1);
-    draw_text_box(0, 142, 240, &FONT_S, "WEB INSTALLER.", C_WHITE, 1);
-    draw_text_box(0, 172, 240, &FONT_S, "PLAY: TRY AGAIN", C_HI, 1);
+    sys_box(0, 18, 240, SYS_B, APP_NAME " SAFE MODE", C_HI, 1);
+    sys_box(0, 52, 240, SYS_S, "IT CRASHED TWICE", C_WHITE, 1);
+    sys_box(0, 72, 240, SYS_S, "WHILE STARTING.", C_WHITE, 1);
+    sys_box(0, 102, 240, SYS_S, "NO SOUND. USB IS ON:", C_WHITE, 1);
+    sys_box(0, 122, 240, SYS_S, "REINSTALL FROM THE", C_WHITE, 1);
+    sys_box(0, 142, 240, SYS_S, "WEB INSTALLER.", C_WHITE, 1);
+    sys_box(0, 172, 240, SYS_S, "PLAY: TRY AGAIN", C_HI, 1);
     if (fm1_crash.magic == FM1_CRASH_MAGIC) {
         b[0] = 'P';
         b[1] = 'C';
         b[2] = ' ';
         hexs(b + 3, fm1_crash.pc);
-        draw_text_box(0, 208, 240, &FONT_S, b, C_GRAY, 1);
+        sys_box(0, 208, 240, SYS_S, b, C_GRAY, 1);
     }
     fm1_input_init();
     panel_init();
@@ -648,7 +651,7 @@ static void safe_main(void)
         if ((fm1_in.buttons & play) && fm1_ms - t0 > 500u) {
             bootguard.failed = 0;                   /* try the app again, from scratch */
             bootguard.pending = 0;
-            draw_text_box(0, 172, 240, &FONT_S, "STARTING " APP_NAME "...", C_HI, 1);
+            sys_box(0, 172, 240, SYS_S, "STARTING " APP_NAME "...", C_HI, 1);
             usb_detach();
             fm1_delay_ms(30);
             fm1_reboot();
@@ -678,10 +681,10 @@ static void splash(void)                           /* the app's (APP_SPLASH), or
     lcd_fill(0, 0, 240, 240, RGB(250, 244, 232));
     cv_begin(240, 64, RGB(250, 244, 232));
     {
-        int32_t w = text_w(&APP_BIG_FONT, APP_NAME);
-        cv_text((240 - w) / 2, 0, &APP_BIG_FONT, APP_NAME, APP_SPLASH_RGB);
-        w = text_w(&FONT_S, APP_TAGLINE);
-        cv_text((240 - w) / 2, 42, &FONT_S, APP_TAGLINE, RGB(150, 136, 118));
+        int32_t w = sys_w(SYS_BIG, APP_NAME);
+        sys_text((240 - w) / 2, 0, SYS_BIG, APP_NAME, APP_SPLASH_RGB);
+        w = sys_w(SYS_S, APP_TAGLINE);
+        sys_text((240 - w) / 2, 42, SYS_S, APP_TAGLINE, RGB(150, 136, 118));
     }
     cv_blit(0, 92);
 #endif
@@ -733,8 +736,8 @@ static void fm1_main(void)
         b[1] = 'C';
         b[2] = ' ';
         hexs(b + 3, fm1_crash.pc);
-        draw_text_box(0, 176, 240, &FONT_S, "RESTARTED AFTER A CRASH", RGB(255, 80, 60), 1);
-        draw_text_box(0, 196, 240, &FONT_S, b, C_GRAY, 1);
+        sys_box(0, 176, 240, SYS_S, "RESTARTED AFTER A CRASH", RGB(255, 80, 60), 1);
+        sys_box(0, 196, 240, SYS_S, b, C_GRAY, 1);
         fm1_wdt_feed();
         fm1_delay_ms(2500);
         fm1_wdt_feed();
@@ -860,6 +863,10 @@ static void fm1_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d, p3, src, wdt;
+#ifdef APP_CSTART
+    app_cstart();                                   /* the app's, before the RAM is cleared (registers only: a second
+                                                     * core a reset left running, held) */
+#endif
     fm1_time_init();
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;

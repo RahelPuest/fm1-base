@@ -35,7 +35,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
   mirror = true              the screen and panel mirrored over USB (FM1B_MIRROR: device/mirror.c; web/mirror/,
-                             tools/fm1_mirror.py), the panel played from the host
+                             tools/fm1_mirror.py), the panel played from the host; FM1B_MIRROR=1 in the environment
+                             builds it in whatever fm1.toml says (an app's demo build), FM1B_POOL_SPARE=N the
+                             pool spare the build insists on (8192 B; a demo build may spend it)
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
                              tools/fm1_backup.py); app.h gives APP_BACKUP_OBJS, _MAGIC, _VERSION and the app_backup_* hooks
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
@@ -52,6 +54,18 @@ app.h); the build prints what it has.
   net_cflags = ["-DX=0"]     more flags for those
   gen = ["tools/places.py --out {gen}/places.h"]   the app's generators, run before the build (relative to APP_DIR;
                              {gen} is the generated headers' directory, on the include path)
+  asm = ["cpu1/entry.S"]     the app's own assembly units (relative to APP_DIR), assembled as felucca-bsp's are; an
+                             app's hardware code outside the BSP (its own second core, say) is the app's to keep
+                             apart (vendored, so the register check leaves it)
+  ir_pass = "tools/size_fns.py"   a pass over the LLVM IR of each unit before its code is made (relative to APP_DIR):
+                             the build compiles unity.c and each o2 unit to IR without the optimiser, runs
+                             `ir_pass IN.ll OUT.ll [UNIT]` (UNIT: an o2 unit's path relative to APP_DIR; none for
+                             unity.c), then compiles OUT.ll at the unit's level (an app marking its cold code
+                             minsize: Melodee's idea). Without changes the round trip makes the same code
+The second core's code that runs from RAM goes in section .c1_text: in .ram_text (copied at boot, inside the guard's
+RAM code window), between _c1_start and _c1_end; the check that RAM code calls nothing in the flash leaves it out
+(core 1 runs only while core 0 waits for it in the audio interrupt, and core 0 turns the flash off only with
+interrupts off).
 Outputs in APP_DIR/build/: NAME.bin (app), loader/ota.bin (update loader), NAME.fwsc (package).
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
@@ -436,21 +450,44 @@ def build_app():
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     o2 = [f if f != "-Os" else "-O2" for f in flags]
+    ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
+    ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
     units = [("cc", "-c", BSP / "chip" / "crt0.S", "-o", OUT / "crt0.o"),
              ("cc", "-c", BSP / "chip" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
              ("cc", "-c", BSP / "chip" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-             ("cc", *flags, "-c", SRC / "device" / "unity.c", "-o", OUT / "unity.o")]
+             ("cc", *flags, *ir_out, "-c", SRC / "device" / "unity.c", "-o", OUT / ("unity.ll" if ir else "unity.o"))]
     objs = [OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o", OUT / "unity.o"]
+    for a in CONF.get("asm", []):                 # the app's own assembly units
+        o = OUT / ("asm_" + "_".join((APP / a).relative_to(APP).with_suffix("").parts) + ".o")
+        units.append(("cc", "-c", APP / a, "-o", o))
+        objs.append(o)
     (OUT / "o2").mkdir(parents=True, exist_ok=True)
     o2_more = [*CONF.get("o2_cflags", []),
                *[a for h in CONF.get("o2_include", []) for a in ("-include", str((APP / h).resolve().relative_to(ROOT)))]]
+    o2_units = []
     for u in CONF.get("o2", []):
         for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
             o = OUT / "o2" / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")
-            units.append(("cc", *o2, *o2_more, *inc(f.parent), "-c", f, "-o", o))
+            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
             objs.append(o)
+            o2_units.append((f, o))
     b_units, b_objs, b_libs = radio_units() if BLE or WIFI else ([], [], [])
     tc_all(*units, *b_units)
+    if ir:                                        # the pass, then each unit's code from its IR at its own level
+        def ir_pass(src, dst, unit=None):
+            r = subprocess.run([sys.executable, str(APP / ir), str(src), str(dst), *([unit] if unit else [])],
+                               capture_output=True, text=True)
+            sys.stdout.write(r.stdout)
+            if r.returncode:
+                sys.stderr.write(r.stderr)
+                raise SystemExit(f"build: {ir} failed")
+        ir_pass(OUT / "unity.ll", OUT / "unity.pass.ll")
+        for f, o in o2_units:
+            ir_pass(o.with_suffix(".ll"), o.with_suffix(".pass.ll"), str(f.relative_to(APP)))
+        opt = [f for f in flags if not f.startswith(("-I", "-D", "-W"))]
+        tc_all(("cc", *opt, "-c", OUT / "unity.pass.ll", "-o", OUT / "unity.o"),
+               *[("cc", *[f if f != "-Os" else "-O2" for f in opt], "-c", o.with_suffix(".pass.ll"), "-o", o)
+                 for _, o in o2_units])
     elf = OUT / (NAME + ".elf")
     # unreferenced functions (each in its own section: -ffunction-sections) are dropped: the DSP keeps
     # mono reference paths for the host tests that the firmware no longer calls. The BT libraries are LTO
@@ -533,7 +570,11 @@ def check(img, syms, dis, rt):
         errors.append(f"_start is not at {APP_XIP:#x}")
     if img[:4] != bytes.fromhex("04818000"):
         errors.append(f"image starts with {img[:4].hex()}, not the entry stub")
-    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln)]
+    c1 = [int(m2.group(1), 16) for n in ("_c1_start", "_c1_end")
+          for m2 in [re.search(r"^([0-9a-f]+) .*\s" + n + r"$", syms, re.M)] if m2]
+    in_c1 = (lambda ln: (mm2 := LINE.match(ln)) is not None and c1[0] <= int(mm2.group(1), 16) < c1[1]) \
+        if len(c1) == 2 else (lambda ln: False)   # (the second core's loop: it may call into the flash, see the top)
+    rt_calls = [ln for ln in rt.splitlines() if re.search(r"\bcall\b", ln) and not in_c1(ln)]
     if rt_calls and (BLE or WIFI):  # JieLi's .volatile_ram_code calls out; it runs with the flash on
         notes.append(f"the radio: .ram_text contains calls (JieLi's .volatile_ram_code): {rt_calls[:3]}")
     elif rt_calls:                  # RAM code runs with the flash off: no calls into XIP
@@ -583,6 +624,8 @@ def check(img, syms, dis, rt):
     bss = sym("_bss_end") - 0x01C08000
     pool = sym("_pool_end") - sym("_pool_start")
     ram, pool_max, spare = (128 * 1024, 0x4C000, 2048) if WIFI else (96 * 1024, 0x54000, 8192)   # (app_wifi.ld)
+    if os.environ.get("FM1B_POOL_SPARE", "").isdigit():   # an app's own build for itself (a demo build with mirror)
+        spare = int(os.environ["FM1B_POOL_SPARE"])
     notes.append(f"image {len(img)} B; RAM .data+.bss {bss} B of {ram}; pool {pool} B of {pool_max}")
     if bss > ram:
         errors.append("RAM region overflow")
@@ -669,7 +712,8 @@ def o2_objects(cc, base_flags, out):
 
 def opt_flags():
     """the optional parts an fm1.toml turns on that need no SDK: the same on the device, the host and the web"""
-    return [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP")) if CONF.get(key)]
+    return [f"-D{flag}=1" for key, flag in (("mirror", "FM1B_MIRROR"), ("backup", "FM1B_BACKUP"))
+            if CONF.get(key) or os.environ.get(flag) == "1"]   # (FM1B_MIRROR=1: a build with it, fm1.toml as it is)
 
 
 def build_host():
@@ -804,7 +848,7 @@ def main():
     parts = [("Bluetooth MIDI", BLE), ("Bluetooth MIDI devices", BLE and bool(CONF.get("ble_central"))), ("WiFi", WIFI),
              ("USB audio in", on("usb_audio_in", "FM1B_UAC", True)),
              ("USB audio out", on("usb_audio_out", "FM1B_UAC_OUT", True) and on("usb_audio_in", "FM1B_UAC", True)),
-             ("screen mirroring", bool(CONF.get("mirror"))), ("backup and restore", bool(CONF.get("backup"))),
+             ("screen mirroring", bool(CONF.get("mirror")) or os.environ.get("FM1B_MIRROR") == "1"), ("backup and restore", bool(CONF.get("backup"))),
              ("velocity and pressure", any(re.search(r"^#define APP_TOUCH\b", f.read_text(errors="ignore"), re.M)
                                             for f in APP.glob("*.h")))]
     print("parts    " + ", ".join(n for n, x in parts if x) + "  (not built in: " +

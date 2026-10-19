@@ -141,6 +141,9 @@ Before writing a feature into the app, look for it in fm1-base (`include/plat.h`
 | USB audio at full level, MASTER for the speaker only | `plat_usb_audio_full` |
 | lower case in the big fonts | `font_full = ["L"]` |
 | its own exports in the browser build | `APP_WEB` (the app's `web.c`), and its own page in `app/web/emu/` |
+| its own second core (hardware code that cannot go into felucca-bsp: another licence, not tried there yet) | `asm = [...]` (its entry assembled), `vendored = [...]` (the register check leaves it), its RAM loop in section `.c1_text` (copied and guarded with `.ram_text`, left out of the RAM-calls check), `APP_CSTART` (held first thing at a start), `APP_FAULT` (a crash on it, or beside it) |
+| functions built for size by an IR pass (Melodee's `minsize`) | `ir_pass = "tools/size_fns.py"`: the build runs it on each unit's LLVM IR |
+| simulator commands with more words than four | `plat_host_line` in `app_host_cmd` |
 
 ## Comparing with the old simulator
 
