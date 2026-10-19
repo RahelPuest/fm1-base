@@ -3,8 +3,9 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Felucca memory map.
  * Code + constants execute in place from XIP (app.bin offset 0 = 0x02000120).
- * 0x01C00000..0x01C06000 holds .ram_text (code that must run while the flash
- * is busy: the flash driver); 0x01C06000..0x01C08000 stays for RAM-run debug.
+ * 0x01C00000..0x01C08000 holds .ram_text (code that must run while the flash
+ * is busy: the flash driver; an app's audio code, out of the XIP cache's way). (It was 24 KB, the last 8 KB
+ * kept for RAM-run debug; LOOM-8's note starts took them, 2026-10-19.)
  * RAM  : .data/.bss (96 KiB)
  * POOL : big zero-initialised buffers (FX lines, canvases), section .pool
  * STACKS with 256-byte guard bands; NOINIT survives resets and UBOOT entry.
@@ -12,7 +13,7 @@
 MEMORY
 {
     XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
-    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
+    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x8000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000
     NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
