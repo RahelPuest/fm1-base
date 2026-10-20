@@ -34,6 +34,10 @@
   .small { color: var(--dim); font-size: 13px; }
   progress { width: 100%; height: 8px; margin-top: 16px; accent-color: var(--accent); }
   pre { color: var(--dim); font-size: 12px; white-space: pre-wrap; margin-top: 16px; }
+  /* the log: its own scrolling box (an install is a few thousand lines), hidden until it has some */
+  #log { max-height: 15em; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 6px;
+         border: 1px solid color-mix(in srgb, var(--dim) 35%, transparent); }
+  #log:empty { display: none; }
   h2 { font-size: 18px; font-weight: 600; margin: 40px 0 12px; }
   ol { margin: 0 0 16px; padding-left: 20px; }
   textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--fg);
@@ -197,7 +201,12 @@ const sayPct = (k, pct) => {
   lastKey = k; lastArg = ""; lastPct = pct; saidAt = now; show();
 };
 const say = (txt) => { lastKey = null; $("alert").textContent = ""; $("status").textContent = txt; };
-const log = (t) => { $("log").textContent += t + "\n"; };
+/* follows the newest line, unless the reader has scrolled up to look at an earlier one */
+const log = (t) => {
+  const el = $("log"), atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  el.append(t + "\n");
+  if (atEnd) el.scrollTop = el.scrollHeight;
+};
 let image = null;
 const meta = /*META*/;
 
