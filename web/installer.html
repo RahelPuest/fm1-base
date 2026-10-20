@@ -243,20 +243,29 @@ async function run(img, product, isStock) {
   $("go").disabled = $("stockgo").disabled = true;
   try {
     const up = new Updater(midi, log);
-    const total = 74 + 1167;
-    const step = (k, a) => {
+    /* progress: the bytes the device reads, against what it reads for this package (the size of the package,
+       not a fixed request count). Step 1 (the running firmware): the UFW header, the loader's head twice, its
+       body. Step 2 (fm1-base's loader): the header, the chip-key check, the whole flash.bin (checked before
+       anything is erased), then the app area again as it writes it. Held at 99 until the device comes back. */
+    const ent = ufwEntries(img), fl = ent[0], ldr = ent[100];
+    const CHECK = 0x400 + 0x400 + (ldr ? ldr.len - 0x20 : 0);
+    const WRITE = fl && fl.len > 0x4000 && fl.len <= 0x100000 ? 0x400 + 0x20 + fl.len + (fl.len - 0x4000) : img.length;
+    const total = CHECK + WRITE;
+    const step = (k, a, b) => {
       log(`${k} ${a ?? ""}`);
       if (k === "start") sayK("start");
-      if (k === "verify") { $("bar").value = (a / total) * 100; sayPct("verify", $("bar").value); }
+      if (k === "verify") { $("bar").value = (Math.min(b, CHECK) / total) * 100; sayPct("verify", $("bar").value); }
       if (k === "loader") sayK("loader");
-      if (k === "write") { $("bar").value = ((74 + a) / total) * 100; sayPct("write", $("bar").value); }
+      if (k === "write") { $("bar").value = Math.min(99, ((CHECK + b) / total) * 100); sayPct("write", $("bar").value); }
       if (k === "reboot") sayK("reboot");
       if (k === "done") { $("bar").value = 100; sayK(isStock ? "stockdone" : "done"); }
     };
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      sayK((await up.resume(img, step)) ? (isStock ? "stockdone" : "done") : "stopped");
+      const done = await up.resume(img, step);
+      if (done) $("bar").value = 100;
+      sayK(done ? (isStock ? "stockdone" : "done") : "stopped");
     } else {
       await up.install(img, product, step);
     }
