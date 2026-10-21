@@ -93,6 +93,19 @@ void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t
                     keys);
     }
 }
+void plat_lights_mid(uint32_t buttons, uint32_t keys)   /* felucca-bsp's steady mid level (fm1_led_mid) */
+{
+    uint8_t ml[FM1_NCOL] = {0};
+    uint32_t i, c;
+    for (i = 0; i < NB + NKEYS; i++) {
+        uint32_t id = i < NB ? panel.btn[i] : 14u + (i - NB);
+        uint8_t q = led_pos[id];
+        if (q != 0xFF && (i < NB ? (buttons >> i) & 1u : (keys >> (i - NB)) & 1u))
+            ml[q >> 3] |= (uint8_t)(1u << (q & 7u));
+    }
+    for (c = 0; c < FM1_NCOL; c++)
+        fm1_led_mid[c] = (uint8_t)(ml[c] & ~fm1_led[c]);
+}
 static uint8_t glow_on = 1, play_red;
 void plat_glow(int on) { glow_on = (uint8_t)(on != 0); }
 void plat_play_red(int red) { play_red = (uint8_t)(red != 0); }

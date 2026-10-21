@@ -178,6 +178,13 @@ void plat_lights(uint32_t b, uint32_t k, uint32_t db, uint32_t dk, int glow)
                     (b & play ? 1u << 15 : 0u), k);
     }
 }
+static uint32_t mid_keys;               /* plat_lights_mid's keys: "leds" (and the browser's web_dim_keys) shows them as
+                                         * the glow */
+void plat_lights_mid(uint32_t b, uint32_t k)
+{
+    (void)b;
+    mid_keys = k & ~lit_keys;
+}
 static int glow_on = 1;                 /* the device's button glow (plat_glow) */
 void plat_glow(int on) { glow_on = on; }
 void plat_play_red(int red) { (void)red; }      /* the device's PLAY colour: green, red while recording */
@@ -1322,10 +1329,10 @@ int main(int argc, char **argv)
                     printf(" %s", BTN_N[i]);
             printf(" | white ");
             for (i = 0; i < 16; i++)
-                printf("%c", (lit_keys >> HOST_WHITE_K[i] & 1u) ? '#' : (dim_keys >> HOST_WHITE_K[i] & 1u) ? '+' : '.');
+                printf("%c", (lit_keys >> HOST_WHITE_K[i] & 1u) ? '#' : ((dim_keys | mid_keys) >> HOST_WHITE_K[i] & 1u) ? '+' : '.');
             printf(" black ");
             for (i = 0; i < 11; i++)
-                printf("%c", (lit_keys >> HOST_BLACK_K[i] & 1u) ? '#' : (dim_keys >> HOST_BLACK_K[i] & 1u) ? '+' : '.');
+                printf("%c", (lit_keys >> HOST_BLACK_K[i] & 1u) ? '#' : ((dim_keys | mid_keys) >> HOST_BLACK_K[i] & 1u) ? '+' : '.');
             printf("\n");
         } else if (!strcmp(cmd, "expect"))
             fails += expect(a, b);

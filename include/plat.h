@@ -40,6 +40,9 @@ uint32_t plat_master(void);            /* MASTER pot's position, 0..4096 (the re
  * ones off, 1 low, 2 high. Bit NB in buttons / dim_buttons is PLAY's second, green LED */
 void plat_lights(uint32_t buttons, uint32_t keys, uint32_t dim_buttons, uint32_t dim_keys, int glow);
 #define LED_PLAY_GREEN (1u << NB)
+/* a third level, between the glow and lit (~12 % of lit; ~8 % with glow 1): these buttons and keys, unless lit, until
+ * the next call (0, 0: none). Call it after plat_lights each time the lights change */
+void plat_lights_mid(uint32_t buttons, uint32_t keys);
 /* the same, simpler: the lit buttons and keys, the unlit buttons glowing if plat_glow(1); PLAY lights green, red
  * while plat_play_red(1) */
 void plat_leds(uint32_t buttons, uint32_t keys);

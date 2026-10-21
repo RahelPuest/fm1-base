@@ -112,7 +112,7 @@ __attribute__((used, visibility("default"))) void web_master(uint32_t v) { maste
 __attribute__((used, visibility("default"))) uint32_t web_lit_buttons(void) { return lit_btn; }
 __attribute__((used, visibility("default"))) uint32_t web_lit_keys(void) { return lit_keys; }
 __attribute__((used, visibility("default"))) uint32_t web_dim_buttons(void) { return dim_btn; }
-__attribute__((used, visibility("default"))) uint32_t web_dim_keys(void) { return dim_keys; }
+__attribute__((used, visibility("default"))) uint32_t web_dim_keys(void) { return dim_keys | mid_keys; }
 
 /* MIDI: in from the page (port PORT_*: a Web MIDI input is USB), out as the app sent it (USB-MIDI packets) */
 __attribute__((used, visibility("default"))) void web_midi_in(uint32_t port, uint32_t pkt)
