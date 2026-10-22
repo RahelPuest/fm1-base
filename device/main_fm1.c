@@ -795,25 +795,6 @@ static void fm1_main(void)
 #ifdef APP_LOOP
         app_loop();                                 /* the app's background (a radio's tasks) */
 #endif
-        {   /* OCT- + OCT+ held 5 s: update mode (Felucca's, unchanged) */
-            static uint32_t t0, shown;
-            uint32_t both = (1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]);
-            if ((fm1_in.buttons & both) != both) {
-                if (shown)
-                    app_say("UPDATE MODE", "CANCELLED");
-                shown = 0;
-                t0 = fm1_ms;
-            } else if (fm1_ms - t0 > 2000u && fm1_ms - t0 <= 5000u) {
-                uint32_t left = (5000u - (fm1_ms - t0) + 999u) / 1000u;
-                if (left != shown) {
-                    char d[4] = {(char)('0' + left), '.', '.', 0};
-                    app_say("UPDATE MODE IN", d);
-                    shown = left;
-                }
-            } else if (fm1_ms - t0 > 5000u) {
-                enter_uboot("UBOOT");
-            }
-        }
         {   /* a screen reader's SysEx (announce.c), before the updater looks */
             const uint8_t *p;
             uint32_t n;

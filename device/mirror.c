@@ -30,8 +30,7 @@
  *                   They go in at the plat_* calls (plat_buttons, plat_keys, plat_enc, plat_master: held = the panel's
  *                   OR the host's), the path the panel takes into the app; the input reports show them. Mirroring off
  *                   (asked, timed out, unplugged, another host): everything let go, a test session ended. Never in the
- *                   update mode's OCT- + OCT+ (main_fm1.c reads the matrix), the calibration, or a restore's question
- *                   (backup.c: the hand's).
+ *                   calibration or a restore's question (backup.c: the hand's).
  *   device -> host  cmd 0x54: seq, op, 1 done / 0 refused (mirroring off, a bad op). The same seq again (an answer
  *                   lost, the host asks again): answered again, not done twice
  * seq counts rect and fill frames (mod 256): a gap tells the viewer one went missing (it asks for a refresh).
