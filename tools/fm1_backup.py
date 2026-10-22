@@ -20,6 +20,10 @@ nothing.
 
 The file (little-endian): the magic, u16 version, u16 count, u32 flags (bit 0: taken while playing), u32 CRC-32 of
 those 12 bytes; each object: u16 id, u16 length, u32 CRC-32, the payload; u32 CRC-32 of everything before.
+After that a file may carry the firmware's own sections, which the web backup page reads and writes over the
+firmware's own SysEx (web/backup/index.html EXTRAS: LOOM-8's samples): each a 4-letter tag, u32 length, the bytes,
+u32 CRC-32 of the bytes. This tool restores the backup itself and leaves the sections alone (split, the firmware's
+own tool for them); info lists them.
 
 As a library (a firmware's own tool: Polly's polly_backup.py): Kind(magic, version, objs, names, identity, name),
 then parse / build / find / backup / restore / main with kind=.
@@ -142,6 +146,42 @@ def parse(image, kind=ANY):
     if pos + 4 != len(image) or struct.unpack_from("<I", image, pos)[0] != zlib.crc32(image[:pos]):
         raise BackupError("damaged (the whole file's CRC-32)")
     return flags, objs
+
+
+def split(data):
+    """a file -> (the backup itself, [(tag, bytes)]): the firmware's sections after the backup's own CRC-32;
+    BackupError on a damaged section (the backup itself is checked by parse)"""
+    pos = HEAD
+    if len(data) >= HEAD:
+        n = struct.unpack_from("<H", data, 6)[0]
+        for _ in range(n):
+            if pos + REC > len(data):
+                break
+            pos += REC + struct.unpack_from("<H", data, pos + 2)[0]
+    pos += 4
+    if pos >= len(data):
+        return bytes(data), []
+    out, at = [], pos
+    while at < len(data):
+        if at + 8 > len(data):
+            raise BackupError("a section after the backup is cut short")
+        tag, ln = data[at:at + 4].decode("latin-1"), struct.unpack_from("<I", data, at + 4)[0]
+        if at + 8 + ln + 4 > len(data):
+            raise BackupError(f"its section {tag} is cut short")
+        body = bytes(data[at + 8:at + 8 + ln])
+        if struct.unpack_from("<I", data, at + 8 + ln)[0] != zlib.crc32(body):
+            raise BackupError(f"its section {tag} is damaged (CRC-32)")
+        out.append((tag, body))
+        at += 8 + ln + 4
+    return bytes(data[:pos]), out
+
+
+def join(image, sections):
+    """the backup and the firmware's sections, as the web page writes them"""
+    out = bytearray(image)
+    for tag, body in sections:
+        out += tag.encode("latin-1") + struct.pack("<I", len(body)) + body + struct.pack("<I", zlib.crc32(body))
+    return bytes(out)
 
 
 def magic_of(image):
@@ -300,10 +340,15 @@ def restore(backend, path, port=None, yes=False, ask=I.ask_tty, out=sys.stdout, 
     except OSError as e:
         raise I.InstallError("usage", f"cannot read {path}: {e.strerror}")
     try:
+        image, sections = split(image)
         flags, objs = parse(image, kind)
     except BackupError as e:
         raise I.InstallError("badpkg", f"{path}: {e}")
     print(f"backup: {kind.summary(objs)}", file=out)
+    if sections:
+        print(f"note: its section{'s' if len(sections) > 1 else ''} {', '.join(t for t, _ in sections)} "
+              f"({sum(len(b) for _, b in sections)} bytes) {'are' if len(sections) > 1 else 'is'} not restored by "
+              "this tool: the web backup page restores them, or the firmware's own tool", file=out)
     dev = find(backend, port, kind)
     print(f"device: {dev.id.text}  ({dev.name})", file=out)
     k = known(dev.id.text)
@@ -339,12 +384,15 @@ def restore(backend, path, port=None, yes=False, ask=I.ask_tty, out=sys.stdout, 
 def info(path, out=sys.stdout, kind=ANY):
     with open(path, "rb") as f:
         image = f.read()
+    image, sections = split(image)
     flags, objs = parse(image, kind)
     what = f"a {kind.name} backup" if kind.magic else f"a backup ({magic_of(image).decode('ascii')}, version " \
         f"{struct.unpack_from('<H', image, 4)[0]})"
     print(f"{path}: {what}, {kind.summary(objs)}" + (" (taken while playing)" if flags & 1 else ""), file=out)
     for o, d in objs:
         print(f"  {kind.names(o):10s} {len(d):5d} bytes" if d else f"  {kind.names(o):10s}     -", file=out)
+    for tag, body in sections:
+        print(f"  section {tag} {len(body)} bytes (the firmware's own: not restored by this tool)", file=out)
     return 0
 
 

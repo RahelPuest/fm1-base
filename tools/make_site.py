@@ -70,12 +70,14 @@ def backup_values(app, conf):
     name = conf.get("name", Path(app).name)
     return {"NAME": name, "ID": conf.get("id_prefix", ""), "MAGIC": magic, "BACKUP_VERSION": v.group(1),
             "EXT": conf.get("backup_ext", "bak"), "HOLDS": conf.get("backup_holds", f"everything {name} saves"),
-            "EXTRA": ""}
+            "EXTRA": "", "EXTRAS_JS": "const EXTRAS = [];",
+            "TERMINAL": "You can also back up from a terminal. Run <code>python3 tools/fm1_backup.py</code> in fm1-base's "
+                        "repository. It does the same, and makes the same files."}
 
 
 def tool_pages(app, conf=None, values=None):
     """{"mirror/index.html": html, "backup/index.html": html}, as fm1.toml asks (mirror, backup), filled in; values:
-    the firmware's own, over the defaults (EXTRA: its notes)"""
+    the firmware's own, over the defaults (EXTRA: its notes; EXTRAS_JS: its own sections, web/backup/index.html)"""
     app = Path(app).resolve()
     conf = conf or read_conf(app / "fm1.toml")
     out = {}

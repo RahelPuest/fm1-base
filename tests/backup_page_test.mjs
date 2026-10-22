@@ -17,7 +17,7 @@ import zlib from "zlib";
 import { fileURLToPath } from "url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", EXT: "bak", HOLDS: "everything", EXTRA: "" };
+const FILL = { NAME: "Template", ID: "FM-1_11", MAGIC: "TSTB", BACKUP_VERSION: "3", EXT: "bak", HOLDS: "everything", EXTRA: "", EXTRAS_JS: "const EXTRAS = [];", TERMINAL: "" };
 let html = fs.readFileSync(path.join(root, "web/backup/index.html"), "utf8");
 html = html.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in FILL ? FILL[k] : m));
 const unfilled = html.match(/\{\{[A-Z_]+\}\}/g);
@@ -240,6 +240,25 @@ const resealed = (b) => {                                      // its CRCs right
   const empty = { inputs: new Map(), outputs: new Map() };
   const e = await err(PB.find(empty, () => null));
   check(e && e.code === "notfound", "no FM-1: not found");
+}
+{
+  // the firmware's own sections after the backup (EXTRAS): the page's join and split against fm1_backup.py's
+  const secs = [{ tag: "LSMP", data: Uint8Array.from({ length: 2304 }, (_, i) => i & 0xFF) }, { tag: "ZZZZ", data: new Uint8Array(0) }];
+  const withsec = Uint8Array.from(Buffer.from(tr.withsec, "hex"));
+  const joined = PB.join(img, secs);
+  check(same(joined, withsec), "join: the file fm1_backup.py's join makes, byte for byte");
+  const sp = PB.split(withsec);
+  check(same(sp.image, img) && sp.sections.length === 2 && sp.sections[0].tag === "LSMP" && same(sp.sections[0].data, secs[0].data) &&
+        sp.sections[1].tag === "ZZZZ" && !sp.sections[1].data.length, "split: the backup and its sections");
+  check(PB.split(img).sections.length === 0 && same(PB.split(img).image, img), "split: a file without sections");
+  let e = null; try { PB.split(withsec.subarray(0, withsec.length - 1)); } catch (x) { e = x; }
+  check(e && e.code === "file" && /cut short/.test(e.message), "split: a section cut short");
+  const bad = Uint8Array.from(withsec); bad[img.length + 20] ^= 1;
+  e = null; try { PB.split(bad); } catch (x) { e = x; }
+  check(e && e.code === "file" && /LSMP/.test(e.message), "split: a section damaged");
+  const dev = new FakeFM1(other);
+  const code = await PB.restore((await connect(dev)).link, PB.split(withsec).image);
+  check(code === 0 && same(dev.image, img), "restore of the backup split from a file with sections");
 }
 console.log(fails ? `backup page test FAILED (${fails})` : "backup page test passed");
 process.exit(fails ? 1 : 0);

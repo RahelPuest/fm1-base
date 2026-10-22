@@ -4,9 +4,18 @@
      Backup and restore in the browser (fm1.toml backup = true): tools/fm1_backup.py's backup and restore over Web MIDI
      (SysEx), on the protocol of device/backup.c. From Polly's. tools/make_site.py fills in the firmware's own
      ({{...}}): NAME, ID its identity's prefix (fm1.toml id_prefix), MAGIC and BACKUP_VERSION (app.h APP_BACKUP_MAGIC,
-     APP_BACKUP_VERSION), EXT the files' extension, HOLDS what a backup holds (a phrase), EXTRA more notes (<li>s). The
-     part between the "backup protocol" markers is what tests/backup_page_test.mjs runs against a simulated FM-1 and
-     against a transcript of tools/fm1_backup.py. -->
+     APP_BACKUP_VERSION), EXT the files' extension, HOLDS what a backup holds (a phrase), EXTRA more notes (<li>s),
+     EXTRAS_JS the firmware's own sections (default none: "const EXTRAS = [];"), TERMINAL the note on doing it from
+     a terminal. The part between the "backup
+     protocol" markers is what tests/backup_page_test.mjs runs against a simulated FM-1 and against a transcript of
+     tools/fm1_backup.py.
+     A firmware's sections: what it keeps outside the backup's parts (too big for device/backup.c, which holds a
+     restore in RAM until it is checked), read and written by the page over the firmware's own SysEx. Each is an
+     object in EXTRAS: {tag (4 letters), what (a phrase: "the samples"), backup(link, onProgress(0..1)) -> bytes,
+     check(bytes) -> a phrase on what it holds (throws on a bad one), restore(link, bytes, onProgress(0..1))
+     (throws on failure)}; link: send(bytes), read(ms) -> a SysEx message or null, drain(), lost. In the file, after
+     the backup's own CRC, each section: its tag, u32 length, the bytes, u32 CRC-32 of the bytes (fm1_backup.py
+     split). A restore puts the backup back first, then, once the FM-1 said yes, each section the page knows. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -93,7 +102,7 @@ cable. This page works in Chrome or Edge, and there is nothing to install.</p>
   <li>A cut cable or a damaged file changes nothing. Even a power cut during the write leaves either what was there or
     the backup, never a mix.</li>
   <li>The browser asks once for permission to use MIDI with SysEx. Allow it, and close other apps that use the FM-1's MIDI first.</li>
-  <li>You can also back up from a terminal. Run <code>python3 tools/fm1_backup.py</code> in fm1-base's repository. It does the same, and makes the same files.</li>
+  <li>{{TERMINAL}}</li>
 </ul>
 </main>
 <script>
@@ -211,6 +220,42 @@ const PB = (() => {
     if (pos + 4 !== image.length || u32(image, pos) !== crc32(image, 0, pos)) throw bad("This backup is damaged (the whole file's check).");
     return { flags, objs };
   }
+  // a file -> {image: the backup itself, sections: [{tag, data}]}: the firmware's sections after the backup's own
+  // CRC (EXTRAS); throws (code "file") on a damaged one. The backup itself is checked by parse.
+  function split(file) {
+    const bad = (m) => fail("file", m);
+    let pos = HEAD;
+    if (file.length >= HEAD) {
+      const n = u16(file, 6);
+      for (let k = 0; k < n && pos + REC <= file.length; k++) pos += REC + u16(file, pos + 2);
+    }
+    pos += 4;
+    if (pos >= file.length) return { image: file, sections: [] };
+    const sections = []; let at = pos;
+    while (at < file.length) {
+      if (at + 8 > file.length) throw bad("This backup is damaged (a section after it is cut short).");
+      const tag = String.fromCharCode(...file.subarray(at, at + 4)), ln = u32(file, at + 4);
+      if (at + 8 + ln + 4 > file.length) throw bad(`This backup is damaged (its section ${tag} is cut short).`);
+      const data = file.subarray(at + 8, at + 8 + ln);
+      if (u32(file, at + 8 + ln) !== crc32(data)) throw bad(`This backup is damaged (its section ${tag}: a byte changed).`);
+      sections.push({ tag, data });
+      at += 8 + ln + 4;
+    }
+    return { image: file.subarray(0, pos), sections };
+  }
+  function join(image, sections) {
+    const parts = [image];
+    for (const { tag, data } of sections) {
+      const head = new Uint8Array(8);
+      for (let i = 0; i < 4; i++) head[i] = tag.charCodeAt(i);
+      head.set(le32(data.length), 4);
+      parts.push(head, data, Uint8Array.from(le32(crc32(data))));
+    }
+    const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
   function summary(objs) {
     const used = objs.filter((o) => o.data.length).length;
     const total = objs.reduce((a, o) => a + o.data.length, 0);
@@ -324,9 +369,12 @@ const PB = (() => {
   }
 
   return { HS_QUERY, RS_REQ, BU_REQ, BU_END, OK_ADDR, ASK_ADDR, FAIL_ADDR, VERSION, PLAYING, DECLINED, ID, NAME, MAGIC, DELAY, ERRORS,
-           pack7, unpack7, crc32, frame, parseFrame, response, parseRequest, parseIdentity, parse, summary, find, backup, restore };
+           pack7, unpack7, crc32, frame, parseFrame, response, parseRequest, parseIdentity, parse, split, join, summary, find, backup,
+           restore };
 })();
 // --- backup protocol: end
+
+{{EXTRAS_JS}}
 
 // one MIDI in/out pair with a SysEx queue (as fm1ota.js)
 class Link {
@@ -401,15 +449,25 @@ $("backup").addEventListener("click", async () => {
     say(`Receiving the backup from ${esc(FW.name)}&hellip;`);
     progress(0);
     const { image, flags } = await PB.backup(dev.link, (n) => { sayProgress(`Receiving the backup: ${n.toLocaleString("en")} bytes`); bar.removeAttribute("value"); });
+    const sections = [];
+    for (const ex of EXTRAS) {
+      say(`Receiving ${esc(ex.what)} from ${esc(FW.name)}&hellip;`);
+      lastPct = -100;
+      progress(0);
+      const data = await ex.backup(dev.link, (f) => { sayProgress(`Receiving ${esc(ex.what)}: ${Math.floor(f * 100)} percent`, Math.floor(f * 100)); progress(f * 100); });
+      sections.push({ tag: ex.tag, data, ex });
+    }
+    const file = PB.join(image, sections);
     const d = new Date(), pad = (v) => String(v).padStart(2, "0");
     const name = `${FW.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.${FW.ext}`;
-    const url = URL.createObjectURL(new Blob([image], { type: "application/octet-stream" }));
+    const url = URL.createObjectURL(new Blob([file], { type: "application/octet-stream" }));
     const a = document.createElement("a");
     a.href = url; a.download = name;
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     progress(null);
-    say(`Done. <b>${esc(name)}</b> is in your downloads. It holds ${esc(PB.summary(PB.parse(image).objs))}.` +
+    say(`Done. <b>${esc(name)}</b> is in your downloads. It holds ${esc(PB.summary(PB.parse(image).objs))}` +
+        sections.map((s) => `, and ${esc(s.ex.check(s.data))}`).join("") + "." +
         (flags & 1 ? `<br>${esc(FW.name)} was playing, so changes it hadn't saved yet aren't in it. To include them, stop ${esc(FW.name)} and back up again.` : ""));
   } catch (e) {
     progress(null);
@@ -427,10 +485,14 @@ $("file").addEventListener("change", async (e) => {
   info.hidden = true;
   if (f) {
     try {
-      const image = new Uint8Array(await f.arrayBuffer());
+      const { image, sections } = PB.split(new Uint8Array(await f.arrayBuffer()));
       const { flags, objs } = PB.parse(image);
-      picked = { image, name: f.name };
-      info.innerHTML = `<b>${esc(f.name)}</b>: ${esc(PB.summary(objs))}${flags & 1 ? `, taken while ${esc(FW.name)} was playing` : ""}.`;
+      const known = sections.map((s) => ({ ...s, ex: EXTRAS.find((ex) => ex.tag === s.tag) })).filter((s) => s.ex);
+      const said = known.map((s) => `, and ${s.ex.check(s.data)}`).join("");
+      const missing = EXTRAS.filter((ex) => !known.some((s) => s.ex === ex));
+      picked = { image, sections: known, name: f.name };
+      info.innerHTML = `<b>${esc(f.name)}</b>: ${esc(PB.summary(objs))}${esc(said)}${flags & 1 ? `, taken while ${esc(FW.name)} was playing` : ""}.` +
+        (missing.length ? ` It doesn't hold ${esc(missing.map((ex) => ex.what).join(" or "))}, so ${missing.length > 1 ? "those stay" : "they stay"} as they are.` : "");
       info.hidden = false;
       say(`Ready to restore. Stop ${esc(FW.name)} first, then press Restore.`);
     } catch (err) {
@@ -460,7 +522,20 @@ $("restore").addEventListener("click", async () => {
       }
     });
     progress(null);
-    if (code === 0) say(`Done. ${esc(FW.name)} restored the backup and reloaded everything.`);
+    if (code === 0 && picked.sections.length) {
+      for (const s of picked.sections) {
+        say(`Restored. Now sending ${esc(s.ex.what)}&hellip;`);
+        lastPct = -100;
+        progress(0);
+        try {
+          await s.ex.restore(dev.link, s.data, (f) => { sayProgress(`Sending ${esc(s.ex.what)}: ${Math.floor(f * 100)} percent`, Math.floor(f * 100)); progress(f * 100); });
+        } catch (e) {
+          throw new Error(`${FW.name} restored the backup, but not ${s.ex.what}: ${e.message} Restore again to send them.`);
+        }
+      }
+      progress(null);
+      say(`Done. ${esc(FW.name)} restored the backup and ${esc(picked.sections.map((s) => s.ex.what).join(" and "))}, and reloaded everything.`);
+    } else if (code === 0) say(`Done. ${esc(FW.name)} restored the backup and reloaded everything.`);
     else if (code === PB.PLAYING) say(`<b>STOP FIRST.</b> ${esc(FW.name)} is playing. Press <kbd>PLAY</kbd> on the FM-1 to stop it, then press Restore again. Nothing changed.`, "err");
     else if (code === PB.DECLINED) say("Not restored. Someone pressed <kbd>HOME</kbd> on the FM-1, or nobody answered within a minute. Nothing changed.", "err");
     else say(`Not restored. There was a problem with ${esc(PB.ERRORS[code] || "code " + code)}.` + (code === 12 ? "" : " Nothing changed. Try again."), "err");
