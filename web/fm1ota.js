@@ -15,11 +15,13 @@ const IS_OTA = (id) => /^ota-/i.test(id.model);
 
 // M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 // first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then
-// the update runs as usual. Only M-VAVE's FM-1 V15 is installed over it (the pages check that file's
-// SHA-256): its loader rewrites the whole flash, boot head included, which returns the FM-1 to stock.
+// the update runs as usual. Only M-VAVE's own FM-1 firmware is installed over it: its loader rewrites the
+// whole flash, boot head included, which returns the FM-1 to stock.
 const OPEN_RE = /^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/;
-const STOCK = "FM-1_015";
-const STOCK_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a";
+// M-VAVE's FM-1 firmware, any version: "FM-1_0" and two digits ("FM-1_016"; fm1-base's dev builds are
+// "FM-1_x00", its releases longer; m-bootloader's installer is FM-1_099). Whether a package is safe to write is the device's to check
+// (felucca-bsp chip/ota.c: a well-made writer, a bootable boot area), not a list of known files
+const IS_STOCK = (product) => /^FM-1_0\d\d$/.test(product) && product !== "FM-1_099";
 
 // errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
 // mismatch (detail: the identity the device reports), badreq
@@ -205,13 +207,13 @@ export class Updater {
   }
 
   // full install: running firmware -> loader -> new firmware
-  async install(image, product, onStep) {
+  async install(image, product, onStep, sha256) {
     const step = onStep || (() => {});
     const dev = await this.find((id) => !IS_OTA(id));
     if (!dev) throw fail("notfound", "FM-1 not found (USB cable, and no other app using it?)");
     const [model] = product.split("_");
     if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`); }
-    if (dev.id.open) await this.arm(dev, image, product);
+    if (dev.id.open) await this.arm(dev, image, product, sha256);
     step("start", dev.id.text);
     dev.link.send(UPGRADE);
     await sleep(2000);
@@ -234,9 +236,32 @@ export class Updater {
     return back.id.text;
   }
 
-  // M-VAVE's Open firmware: allow the update of stock V15 (and nothing else)
-  async arm(dev, image, product) {
-    if (product !== STOCK) {
+  // m-bootloader (github.com/jvitkauskas/m-bootloader, MIT) after an install: the running firmware (product)
+  // stages the package's installer (no flash.bin: any well-made writer, felucca-bsp chip/ota.c) and resets; the bootloader
+  // runs it, it rewrites the boot area [0, 0x4000) only and restarts into the firmware. It never talks to us:
+  // we wait for the firmware to come back. A firmware that does not know it refuses it, and nothing is written.
+  async installBoot(image, product, onStep) {
+    const step = onStep || (() => {});
+    const dev = await this.waitFor((id) => !IS_OTA(id) && id.text === product, 40000);
+    if (!dev) throw fail("noreturn", "the device did not come back: power-cycle it");
+    step("bootstart");
+    dev.link.send(UPGRADE);
+    await sleep(2000);
+    const s = await this.serve(dev.link, image, 0xE0000000, 8000);
+    dev.link.close();
+    if (!s.finished) throw fail(s.lost ? "lost" : "bootrefused", `m-bootloader: the device stopped after ${s.served} requests: nothing was written`);
+    step("bootwrite");
+    await sleep(3000);
+    const back = await this.waitFor((id) => !IS_OTA(id), 40000);
+    if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
+    back.link.close();
+    step("bootdone", back.id.text);
+    return back.id.text;
+  }
+
+  // M-VAVE's Open firmware: allow the update of M-VAVE's own firmware (sha256: the package file's, hex)
+  async arm(dev, image, product, sha256) {
+    if (!IS_STOCK(product) || !/^[0-9a-f]{64}$/.test(sha256 || "")) {
       dev.link.close();
       throw fail("open", `This FM-1 runs M-VAVE's ${dev.id.text} firmware. Put the stock firmware back first ("Back to the stock firmware"), then install this.`, dev.id.text);
     }
@@ -246,7 +271,7 @@ export class Updater {
       throw fail("stopped", `${dev.id.text} did not accept the update: nothing was written`);
     }
     const n = image.length;
-    const tag = STOCK_SHA256.match(/../g).map((h) => parseInt(h, 16));
+    const tag = sha256.match(/../g).map((h) => parseInt(h, 16));
     const ack = await query(dev.link, 50, [1, cap[5], n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF, ...tag]);
     if (!ack || ack.length !== 1 || ack[0] !== 0) {
       dev.link.close();

@@ -43,6 +43,16 @@
   textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--fg);
              background: transparent; border: 1px solid var(--dim); border-radius: 6px; padding: 8px; }
   input[type=file] { font: inherit; font-size: 13px; color: var(--fg); max-width: 100%; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 8px; }
+  .opt input { margin-top: 6px; accent-color: var(--accent); }
+  .backup { border: 2px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; }
+  .backup strong { color: var(--accent); }
+  dialog { max-width: 440px; border: 0; border-radius: 12px; padding: 24px; background: var(--bg); color: var(--fg);
+           box-shadow: 0 8px 40px rgba(0, 0, 0, .35); }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  dialog h2 { margin: 0 0 12px; }
+  dialog .row { display: flex; gap: 12px; justify-content: flex-end; margin: 24px 0 0; }
+  button.plain { background: none; color: var(--fg); border: 1px solid var(--dim); }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
@@ -57,6 +67,13 @@
     <a href="https://github.com/hugelton/felucca-bsp/tree/main/tools" data-t="bricklink">recovering an FM-1 that won't start</a></p>
   <p class="small" data-t="back"></p>
   <p class="small"><a href="https://www.m-vave.com/download" target="_blank" rel="noopener">www.m-vave.com/download<span class="sr" data-t="newtab"> (opens in a new tab)</span></a></p>
+  <div id="mbootopt" hidden>
+    <p class="opt"><input type="checkbox" id="mboot"><label for="mboot" data-t="mboot"></label></p>
+    <p class="small"><span data-t="mbootwhy"></span>
+      <a href="https://github.com/jvitkauskas/m-bootloader" target="_blank" rel="noopener">github.com/jvitkauskas/m-bootloader<span class="sr" data-t="newtab"> (opens in a new tab)</span></a></p>
+  </div>
+  <p class="backup"><strong data-t="bakh">Back up first.</strong> <span data-t="confirmbak"></span>
+    <a class="baklink" href="../backup/" target="_blank" rel="noopener"><span data-t="backuplink"></span><span class="sr" data-t="newtab"> (opens in a new tab)</span></a></p>
   <p><button type="button" id="go" disabled data-t="install">Install</button></p>
   <label class="sr" for="bar" data-t="progress">Progress</label>
   <progress id="bar" max="100" value="0"></progress>
@@ -80,6 +97,18 @@
   <textarea id="report" readonly hidden rows="14"></textarea>
   <p><a href="../" data-t="manual">Back to {{NAME}}</a></p>
 </main>
+<dialog id="confirm" aria-labelledby="confirmh">
+  <form method="dialog">
+    <h2 id="confirmh" data-t="confirmh"></h2>
+    <p class="backup"><strong data-t="bakh">Back up first.</strong> <span data-t="confirmbak"></span>
+      <a class="baklink" href="../backup/" target="_blank" rel="noopener"><span data-t="backuplink"></span><span class="sr" data-t="newtab"> (opens in a new tab)</span></a></p>
+    <p class="opt"><input type="checkbox" id="bakok"><label for="bakok" data-t="bakok"></label></p>
+    <p data-t="confirm1"></p>
+    <p id="confirmboot" data-t="confirmboot"></p>
+    <div class="row"><button type="submit" class="plain" value="cancel" data-t="confirmcancel"></button>
+      <button type="submit" id="confirmgo" value="go" disabled data-t="confirmgo"></button></div>
+  </form>
+</dialog>
 <footer>
   <p class="small">{{NAME}} is built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (@kurogedelic), <a href="https://hugelton.com" target="_blank" rel="noopener">Hügelton Instruments<span class="sr" data-t="newtab"> (opens in a new tab)</span></a>.{{CREDITS}}<br>
     Fonts: Barlow Semi Condensed (SIL OFL 1.1). M-VAVE and FM-1 are trademarks of their respective owners.<br>
@@ -100,13 +129,13 @@ const TEXT = {
     bricklink: "起動しない FM-1 の復旧（英語）",
     back: "公式ファームウェアに戻すには、このページ下の「純正ファームウェアに戻す」か、M-VAVE 公式のアップデーター M-UPGRADE（Downloads → PC Software → M-UPGRADE）を使います。",
     stockh: "純正ファームウェアに戻す",
-    stockwhy: "M-VAVE の FM-1 V15 を、{{NAME}}（またはそのセーフモード）から同じ USB ケーブルで書き込みます。{{NAME}} で保存したものは消えることがあります。",
-    stock1: "M-VAVE の FM-1 V15 をダウンロード:",
+    stockwhy: "M-VAVE の FM-1 ファームウェアを、{{NAME}}（またはそのセーフモード）から同じ USB ケーブルで書き込みます。{{NAME}} で保存したものは消えることがあります。",
+    stock1: "M-VAVE の FM-1 ファームウェアをダウンロード:",
     stock2: "ダウンロードしたファイルを選ぶ:",
     stock3: "FM-1 を USB で接続し、下のボタンを押す。",
     stockinstall: "純正ファームウェアを書き込む",
-    stockok: "M-VAVE の FM-1 V15 です。ボタンを押してください。",
-    stockbad: "これは M-VAVE の FM-1 V15 のファイルではありません。上のリンクのファイルを選んでください。",
+    stockok: "M-VAVE の FM-1 ファームウェアです。ボタンを押してください。",
+    stockbad: "これは M-VAVE の FM-1 ファームウェアのファイルではありません。上のリンクのファイルを選んでください。",
     stockdone: "完了。FM-1 は純正ファームウェアで起動しました。",
     nomidi: "このブラウザでは使えません。Chrome か Edge で開いてください。", loadfail: "読み込めませんでした: ",
     start: "開始します", verify: "確認中", loader: "書き込みモードに切り替え中", write: "書き込み中",
@@ -127,6 +156,17 @@ const TEXT = {
     reportread: "クラッシュの記録を読む", reportcopy: "コピー", reportlabel: "クラッシュの記録",
     reportwait: "読み込み中…", reportnone: "応答がありません。FM-1 が {{NAME}} を実行しているか確かめてください。",
     reportok: "読み込みました。コピーして送ってください。", reportcopied: "コピーしました。",
+    mboot: "m-bootloader も書き込む: 電源を入れるときに PLAY を押したままでリカバリーメニュー、REC でアップデートモード。ファームウェアが起動しないときにも使えます。",
+    mbootwhy: "Julius Vitkauskas によるオープンなブートローダー（MIT）。M-VAVE のブートローダーと置き換わり、ファームウェアを更新しても残ります。「純正ファームウェアに戻す」で M-VAVE のものに戻ります。メニューの WIPE USER DATA は、ファームウェアが保存したものをすべて消去します。",
+    confirmh: "インストールの前に",
+    confirm1: "書き込み中、FM-1 の画面には UPDATING と進み具合が出るか、暗いままになります。このページに「完了しました」と出るまで、USB ケーブルを抜いたり電源を切ったりしないでください。数分かかることがあります。",
+    confirmboot: "ファームウェアの後に m-bootloader を書き込みます。FM-1 はその間にもう一度再起動します。",
+    bakh: "先にバックアップを。", confirmbak: "書き込みで {{NAME}} に保存したものが消えることがあります。",
+    bakok: "バックアップを取った（または残したいものはない）",
+    backuplink: "{{NAME}} をバックアップする", confirmgo: "書き込む", confirmcancel: "キャンセル",
+    bootstart: "m-bootloader を書き込み中", bootwrite: "m-bootloader を書き込み中。FM-1 は自動で再起動します",
+    bootdone: "完了しました（m-bootloader 付き）",
+    bootrefused: "{{NAME}} はインストールされましたが、m-bootloader は書き込めませんでした。ほかは何も変わっていません。",
   },
   en: {
     intro: "Connect the FM-1 by USB, then press Install. It works in Chrome or Edge; the browser asks once to allow MIDI: allow it.",
@@ -139,13 +179,13 @@ const TEXT = {
     bricklink: "recovering an FM-1 that won't start",
     back: "To go back to the official firmware, use \"Back to the stock firmware\" below, or M-VAVE's own updater, M-UPGRADE (Downloads → PC Software → M-UPGRADE).",
     stockh: "Back to the stock firmware",
-    stockwhy: "This writes M-VAVE's own FM-1 V15 back, from {{NAME}} (or its safe mode, or another firmware with the same update entry) over the same USB cable. What {{NAME}} saved may be lost.",
-    stock1: "Download M-VAVE's FM-1 V15:",
+    stockwhy: "This writes M-VAVE's own FM-1 firmware back, from {{NAME}} (or its safe mode, or another firmware with the same update entry) over the same USB cable. What {{NAME}} saved may be lost.",
+    stock1: "Download M-VAVE's FM-1 firmware:",
     stock2: "Choose the file you downloaded:",
     stock3: "Connect the FM-1 by USB and press the button below.",
     stockinstall: "Install the stock firmware",
-    stockok: "That is M-VAVE's FM-1 V15. Press the button to install it.",
-    stockbad: "That is not M-VAVE's FM-1 V15 file. Choose the file from the link above.",
+    stockok: "That is M-VAVE's FM-1 firmware. Press the button to install it.",
+    stockbad: "That is not M-VAVE's FM-1 firmware. Choose the file from the link above.",
     stockdone: "Done. The FM-1 has restarted with its original firmware.",
     nomidi: "This browser cannot do it. Open the page in Chrome or Edge.", loadfail: "Could not load: ",
     start: "Starting", verify: "Verifying", loader: "Switching to update mode", write: "Writing",
@@ -166,13 +206,24 @@ const TEXT = {
     reportread: "Read the crash report", reportcopy: "Copy", reportlabel: "Crash report",
     reportwait: "Reading…", reportnone: "No answer. Check that the FM-1 is running {{NAME}}.",
     reportok: "Read. Copy it and send it.", reportcopied: "Copied.",
+    mboot: "Also install m-bootloader: hold PLAY while switching on for a recovery menu, or REC for update mode, even when a firmware won't start.",
+    mbootwhy: "An open bootloader by Julius Vitkauskas (MIT). It replaces M-VAVE's bootloader and stays through firmware updates; \"Back to the stock firmware\" puts M-VAVE's back. Its menu's WIPE USER DATA erases everything firmwares have saved.",
+    confirmh: "Before you install",
+    confirm1: "While it is written, the FM-1's screen shows UPDATING and a bar, or stays dark. Don't unplug the USB cable or switch the FM-1 off until this page says Done. It can take several minutes.",
+    confirmboot: "m-bootloader is written after the firmware: the FM-1 restarts once more for it.",
+    bakh: "Back up first.", confirmbak: "Installing can lose what {{NAME}} has saved.",
+    bakok: "I've backed up, or have nothing to keep.",
+    backuplink: "Back up {{NAME}}", confirmgo: "Install", confirmcancel: "Cancel",
+    bootstart: "Installing m-bootloader", bootwrite: "Installing m-bootloader: the FM-1 restarts by itself",
+    bootdone: "Done, with m-bootloader",
+    bootrefused: "{{NAME}} is installed, but m-bootloader could not be: nothing else was changed.",
   },
 };
 let lang = "en";                                 /* English first; 日本語 is a click away */
 const t = (k) => TEXT[lang][k];
 /* what happens goes to two regions: #status (polite) the steps and the progress, #alert a failure */
 const FAILS = new Set(["nomidi", "loadfail", "stopped", "error", "denied", "notfound", "model", "lost", "noloader",
-                       "noreturn", "mismatch", "badpkg", "stockbad"]);
+                       "noreturn", "mismatch", "badpkg", "stockbad", "bootrefused"]);
 let lastKey = null, lastArg = "", lastPct = null;
 const textOf = (k, arg, pct) => t(k) + arg + (pct == null ? "" : t("pct").replace("{n}", pct));
 function show() {
@@ -207,8 +258,12 @@ const log = (t) => {
   el.append(t + "\n");
   if (atEnd) el.scrollTop = el.scrollHeight;
 };
-let image = null;
+let image = null, boot = null;
 const meta = /*META*/;
+
+/* the backup: a requirement before every install; the link where the site has the backup page */
+document.querySelectorAll(".baklink").forEach((a) => { a.hidden = !meta.backup; });
+$("bakok").addEventListener("change", () => { $("confirmgo").disabled = !$("bakok").checked; });
 
 let writing = false;
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = t("leave"); } });
@@ -224,10 +279,21 @@ window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault
     say(`{{NAME}} ${meta.version}`);
     $("go").disabled = false;
   } catch (e) { sayK("loadfail", e.message); }
+  /* m-bootloader: offered only when its package is here and is the one the site was made with */
+  try {
+    if (!meta.boot) return;
+    const r = await fetch(meta.boot.pkg);
+    if (!r.ok) return;
+    const raw = new Uint8Array(await r.arrayBuffer());
+    const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (hex !== meta.boot.sha256 || productOf(raw) !== "FM-1_099") return;
+    boot = logicalImage(raw);
+    $("mbootopt").hidden = false;
+  } catch (_) { /* no option, then */ }
 })();
 
-/* stock firmware: M-VAVE's FM-1 V15, chosen by the user (M-VAVE's server allows no cross-site
-   download) and checked against its SHA-256 (STOCK_SHA256, fm1ota.js, inlined above) before anything is written */
+/* stock firmware: M-VAVE's FM-1 firmware, any version, chosen by the user (M-VAVE's server allows no cross-site
+   download) and named as M-VAVE's (IS_STOCK, fm1ota.js, inlined above); the FM-1 checks the package itself before writing */
 let stock = null;
 $("stockfile").addEventListener("change", async (e) => {
   stock = null;
@@ -237,14 +303,28 @@ $("stockfile").addEventListener("change", async (e) => {
   try {
     const raw = new Uint8Array(await f.arrayBuffer());
     const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
-    if (hex !== STOCK_SHA256) { sayK("stockbad"); return; }
-    stock = { image: logicalImage(raw), product: productOf(raw) };
+    const product = productOf(raw);
+    if (!IS_STOCK(product)) { sayK("stockbad"); return; }
+    stock = { image: logicalImage(raw), product, sha256: hex };
     $("stockgo").disabled = writing;
     sayK("stockok");
   } catch (err) { sayK("error", err && err.message); }
 });
 
-async function run(img, product, isStock) {
+/* before anything is written: the screen, the cable, the time, a backup */
+function confirmed(withBoot) {
+  const d = $("confirm");
+  $("confirmboot").hidden = !withBoot;
+  $("bakok").checked = false;                    /* asked every time */
+  $("confirmgo").disabled = true;
+  d.returnValue = "";
+  d.showModal();
+  return new Promise((r) => d.addEventListener("close", () => r(d.returnValue === "go"), { once: true }));
+}
+
+async function run(img, product, isStock, sha256) {
+  const withBoot = !isStock && !!boot && $("mboot").checked;
+  if (!(await confirmed(withBoot))) return;
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
   catch (e) { sayK("denied"); return; }
@@ -267,16 +347,22 @@ async function run(img, product, isStock) {
       if (k === "loader") sayK("loader");
       if (k === "write") { $("bar").value = Math.min(99, ((CHECK + b) / total) * 100); sayPct("write", $("bar").value); }
       if (k === "reboot") sayK("reboot");
-      if (k === "done") { $("bar").value = 100; sayK(isStock ? "stockdone" : "done"); }
+      if (k === "done" && !withBoot) { $("bar").value = 100; sayK(isStock ? "stockdone" : "done"); }
+      if (k === "bootstart" || k === "bootwrite") sayK(k);
+      if (k === "bootdone") { $("bar").value = 100; sayK("bootdone"); }
     };
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
       const done = await up.resume(img, step);
-      if (done) $("bar").value = 100;
-      sayK(done ? (isStock ? "stockdone" : "done") : "stopped");
+      if (done && withBoot) await up.installBoot(boot, product, step);
+      else {
+        if (done) $("bar").value = 100;
+        sayK(done ? (isStock ? "stockdone" : "done") : "stopped");
+      }
     } else {
-      await up.install(img, product, step);
+      await up.install(img, product, step, sha256);
+      if (withBoot) await up.installBoot(boot, product, step);
     }
   } catch (e) {
     if (isStock && e && e.code === "mismatch") { $("bar").value = 100; sayK("stockdone"); }   /* stock names itself its own way */
@@ -290,7 +376,7 @@ async function run(img, product, isStock) {
 }
 
 $("go").addEventListener("click", () => run(image, meta.product, false));
-$("stockgo").addEventListener("click", () => { if (stock) run(stock.image, stock.product, true); });
+$("stockgo").addEventListener("click", () => { if (stock) run(stock.image, stock.product, true, stock.sha256); });
 
 /* the crash report: the firmware's log readout (device/main_fm1.c log_frame: F0 7D 4C 47 F7 asks, a frame a line,
    "end" last), the same as tools/fm1_remote.py log */

@@ -28,6 +28,12 @@ run trs sh -c "$CC -O2 -w -Ibsp/chip -Ibsp/boards/fm1 -Idevice -o $OUT/trs_test 
 run storage sh -c "$CC -O2 -w -o $OUT/storage_test tests/storage_test.c && $OUT/storage_test"
 run fastmath sh -c "$CC -O2 -w -o $OUT/fastmath_test tests/fastmath_test.c -lm && $OUT/fastmath_test"
 run installer "$PY" tests/install_test.py
+# the web installer's m-bootloader step (web/fm1ota.js installBoot) against a simulated FM-1
+if command -v node >/dev/null 2>&1; then
+    run installer-boot node tests/installer_boot_test.mjs web/m-bootloader/fm1-uboot-1.2.fwsc
+else
+    echo "  skip installer-boot (no node)"
+fi
 # backup and restore over USB (device/backup.c) on storage.c over a simulated flash, for a test app: the stream's
 # frames, a restore refused or failed at every step changing nothing, a power cut at each write: the old set or the
 # new, whole. Then tools/fm1_backup.py against a simulated FM-1 on that image, and the web page (web/backup) against
@@ -43,7 +49,7 @@ else
 fi
 PKG=template/build/template.fwsc
 if [ -f "$PKG" ]; then
-    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG"
+    run ota-entry sh -c "$CC -w -o $OUT/ota_test tests/ota_test.c && $OUT/ota_test $PKG web/m-bootloader/fm1-uboot-1.2.fwsc"
     run update-loader sh -c "head -c 60000 template/build/template.bin > $OUT/old_app.bin && \
         $PY tools/fm1pkg_make.py $OUT/old_app.bin template/build/loader/ota.bin $OUT/old.fwsc >/dev/null && \
         $CC -w -o $OUT/ldr_test tests/ldr_test.c && $OUT/ldr_test $OUT/old.fwsc $PKG"

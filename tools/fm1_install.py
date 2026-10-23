@@ -42,11 +42,16 @@ DELAY = {"open": 0.3, "start": 2.0, "reply": 0.01, "loader": 3.0, "reboot": 3.0,
 
 # M-VAVE's FM1 Open firmware (V10, 2026-10): its updater takes only a package it has been told about
 # first (cmd 49 reads its state, cmd 50 arms it with the image length and the package's SHA-256); then
-# the update runs as usual. Only M-VAVE's FM-1 V15 is installed over it: its loader rewrites the whole
-# flash, boot head included, which returns the FM-1 to stock.
+# the update runs as usual. Only M-VAVE's own FM-1 firmware is installed over it: its loader rewrites the
+# whole flash, boot head included, which returns the FM-1 to stock.
 OPEN_RE = re.compile(r"FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)")
-STOCK = "FM-1_015"
-STOCK_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a"
+
+
+def is_stock(product):
+    """M-VAVE's FM-1 firmware, any version: FM-1_0 and two digits (FM-1_016; fm1-base's dev builds are FM-1_x00,
+    its releases longer); m-bootloader's installer is FM-1_099.
+    Whether a package is safe to write is the FM-1's to check (felucca-bsp chip/ota.c), not a list of files."""
+    return re.fullmatch(r"FM-1_0\d\d", product) is not None and product != "FM-1_099"
 
 EXIT = {"usage": 2, "badpkg": 2, "notfound": 3, "model": 6, "open": 6, "lost": 4, "stopped": 4, "badreq": 4,
         "noloader": 5, "noreturn": 5, "mismatch": 6}
@@ -389,11 +394,11 @@ class Updater:
         return back.id.text
 
     def arm(self, dev, image, product, digest):
-        """M-VAVE's Open firmware: allow the update of stock V15 (and nothing else)"""
-        if product != STOCK or digest != bytes.fromhex(STOCK_SHA256):
+        """M-VAVE's Open firmware: allow the update of M-VAVE's own firmware"""
+        if not is_stock(product) or not digest:
             dev.link.close()
             raise InstallError("open", f"the FM-1 runs M-VAVE's {dev.id.text} firmware: put the stock firmware "
-                                       "back first (M-VAVE's FM-1 V15, FM-1.fwsc), then install this")
+                                       "back first (M-VAVE's FM-1.fwsc), then install this")
         cap = query(dev.link, 49)
         if not cap or len(cap) != 47 or cap[:4] != b"FMC1" or cap[6] != 0:
             dev.link.close()
@@ -429,9 +434,9 @@ def load_package(path, force):
     if not re.fullmatch(r"[^_]+_\d+", product):
         raise InstallError("badpkg", f"{path}: not an FM-1 package (identity {product!r})")
     digest = hashlib.sha256(raw).digest()
-    if LOADER_MARK not in raw and not force and digest != bytes.fromhex(STOCK_SHA256):
-        raise InstallError("badpkg", f"{path}: no Felucca update loader in this package; "
-                                     "only Felucca's own packages and M-VAVE's FM-1 V15 are installed (--force overrides)")
+    if LOADER_MARK not in raw and not force and not is_stock(product):
+        raise InstallError("badpkg", f"{path}: no Felucca update loader in this package and not M-VAVE's firmware "
+                                     "(--force installs it: the FM-1 still checks it before writing)")
     return product, logical_image(raw), digest
 
 

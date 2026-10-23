@@ -287,31 +287,31 @@ def errors():
 
 
 def from_open():
-    """M-VAVE's FM1 Open firmware: back to stock V15 only, after arming its updater"""
+    """M-VAVE's FM1 Open firmware: back to M-VAVE's own firmware (any version) only, after arming its updater"""
+    sha = lambda raw: __import__("hashlib").sha256(raw).digest()
     stock_raw = package("FM-1_015", marker=False)
     stock, ours = pkgfile("FM-1.fwsc", stock_raw), pkgfile("ours.fwsc", package())
-    real = I.STOCK_SHA256
-    I.STOCK_SHA256 = __import__("hashlib").sha256(stock_raw).hexdigest()     # stand-in for the real V15
-    try:
-        image = I.logical_image(stock_raw)
-        dev = FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community", after_write="FM-1_015")
-        rc, out, err = cli([stock, "--yes"], dev)
-        ok(rc == 0 and dev.bad == 0 and len(dev.arms) == 1 and dev.arms[0][6:] == bytes.fromhex(I.STOCK_SHA256)
-           and "done: the FM-1 runs FM-1_015" in out, "Open -> stock V15: armed (length, SHA-256), no --force needed")
-        dev = FakeFM1(image, identity="FM1_COMMUNITY_3", name="FM1 Community", after_write="FM-1_015")
-        rc, out, err = cli([stock, "--yes"], dev)
-        ok(rc == 0 and len(dev.arms) == 1, "... a community build (FM1_COMMUNITY_n) too")
-        dev = FakeFM1(I.logical_image(package()), identity="FM1_OFFICIAL_OPEN", name="FM1 Community")
-        rc, out, err = cli([ours, "--yes"], dev)
-        ok(rc == 6 and "stock firmware back first" in err and dev.arms == [] and dev.upgrades == 0,
-           "Open -> one of ours: refused, nothing sent (stock first)")
-        dev = FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community", refuse_arm=True)
-        rc, out, err = cli([stock, "--yes"], dev)
-        ok(rc == 4 and "refused" in err and dev.upgrades == 0, "Open refuses the arming -> exit 4, nothing written")
-        rc, out, err = cli(["--info"], FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community"))
-        ok(rc == 0 and "FM1_OFFICIAL_OPEN" in out, "--info finds Open on its own port name")
-    finally:
-        I.STOCK_SHA256 = real
+    image = I.logical_image(stock_raw)
+    dev = FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community", after_write="FM-1_015")
+    rc, out, err = cli([stock, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and len(dev.arms) == 1 and dev.arms[0][6:] == sha(stock_raw)
+       and "done: the FM-1 runs FM-1_015" in out, "Open -> stock V15: armed (length, its SHA-256), no --force needed")
+    v16_raw = package("FM-1_016", marker=False)
+    dev = FakeFM1(I.logical_image(v16_raw), identity="FM1_OFFICIAL_OPEN", name="FM1 Community", after_write="FM-1_016")
+    rc, out, err = cli([pkgfile("FM-1-v16.fwsc", v16_raw), "--yes"], dev)
+    ok(rc == 0 and len(dev.arms) == 1 and dev.arms[0][6:] == sha(v16_raw), "... stock V16 too: any M-VAVE version")
+    dev = FakeFM1(image, identity="FM1_COMMUNITY_3", name="FM1 Community", after_write="FM-1_015")
+    rc, out, err = cli([stock, "--yes"], dev)
+    ok(rc == 0 and len(dev.arms) == 1, "... a community build (FM1_COMMUNITY_n) too")
+    dev = FakeFM1(I.logical_image(package()), identity="FM1_OFFICIAL_OPEN", name="FM1 Community")
+    rc, out, err = cli([ours, "--yes"], dev)
+    ok(rc == 6 and "stock firmware back first" in err and dev.arms == [] and dev.upgrades == 0,
+       "Open -> one of ours: refused, nothing sent (stock first)")
+    dev = FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community", refuse_arm=True)
+    rc, out, err = cli([stock, "--yes"], dev)
+    ok(rc == 4 and "refused" in err and dev.upgrades == 0, "Open refuses the arming -> exit 4, nothing written")
+    rc, out, err = cli(["--info"], FakeFM1(image, identity="FM1_OFFICIAL_OPEN", name="FM1 Community"))
+    ok(rc == 0 and "FM1_OFFICIAL_OPEN" in out, "--info finds Open on its own port name")
 
 
 def against_js():
