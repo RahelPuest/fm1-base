@@ -50,16 +50,25 @@ void plat_glow(int on);
 void plat_play_red(int red);
 
 /* MIDI: 4-byte USB-MIDI event packets (byte 0 = cable / CIN, then status, data 1, data 2). In from USB, the TRS jack
- * (in only: the FM-1 has no MIDI out jack) and Bluetooth (FM1B_BLE); out to USB and Bluetooth. */
+ * (in only: the FM-1 has no MIDI out jack) and Bluetooth (FM1B_BLE); out to USB and Bluetooth. Bluetooth has two
+ * links with FM1B_BLE_CENTRAL (below), the computer's and the device's: both come in on PORT_BLE, TO_BLE goes to
+ * both, TO_BLE_HOST or TO_BLE_DEV to one. MIDI thru with nothing echoed back where it came from: after plat_midi_in,
+ * plat_midi_send(pkt, (TO_USB | TO_BLE) & ~plat_midi_in_from()) */
 enum { PORT_USB, PORT_BLE, PORT_TRS, NPORTS };
 #define TO_USB (1u << PORT_USB)
-#define TO_BLE (1u << PORT_BLE)
+#define TO_BLE_HOST (1u << PORT_BLE)   /* the computer (a phone, a tablet) connected to the FM-1 */
+#define TO_BLE_DEV (1u << 3)           /* the Bluetooth MIDI device the FM-1 connected to (FM1B_BLE_CENTRAL) */
+#define TO_BLE (TO_BLE_HOST | TO_BLE_DEV)
 int plat_midi_in(uint32_t *pkt, int *port);   /* 1 = got one, from port PORT_* (port may be 0) */
-void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE; main loop, the render or the tick */
+uint32_t plat_midi_in_from(void);      /* where the last one came from, as an out: TO_USB, TO_BLE_HOST or TO_BLE_DEV
+                                        * (0: the TRS jack, which has no out); called where plat_midi_in is */
+void plat_midi_send(uint32_t pkt, uint32_t to);   /* to: TO_USB | TO_BLE, or one link; main loop, the render or the
+                                                   * tick */
 void plat_midi_out(uint32_t pkt);      /* plat_midi_send(pkt, TO_USB) */
-uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues of to (TO_USB, TO_BLE): the fewest
-                                        * among the ports someone listens on; 0 when nobody does. A sequencer keeps
-                                        * room for the note-offs it owes before it sends a note-on */
+uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues of to (TO_USB, TO_BLE, a link: each
+                                        * has its own): the fewest among the ones someone listens on; 0 when nobody
+                                        * does. A sequencer keeps room for the note-offs it owes before it sends a
+                                        * note-on */
 uint32_t plat_midi_out_link(void);     /* a number that changes at each new USB connection (a host to tell its
                                         * sounds again: programs, volumes) */
 uint32_t plat_midi_count(int port, int out);   /* messages through port PORT_* since the start (out: sent), real-time (clock...) left out */
@@ -81,7 +90,8 @@ void plat_ble_start(void);
 uint32_t plat_ble_log_total(void);     /* lines written since the last start (survives a reset) */
 const char *plat_ble_log_line(int back);   /* 0 = the newest */
 /* Bluetooth MIDI devices (fm1.toml ble_central = true: FM1B_BLE_CENTRAL 1): the FM-1 connects to one (a keyboard,
- * a controller), beside a computer connected to it. Its MIDI comes in as PORT_BLE too, and TO_BLE goes to both.
+ * a controller), beside a computer connected to it. Its MIDI comes in as PORT_BLE too (plat_midi_in_from:
+ * TO_BLE_DEV), and TO_BLE goes to both (TO_BLE_DEV to the device alone, TO_BLE_HOST to the computer).
  * Scanning finds the devices that advertise the MIDI service (up to 8); connecting stops the scan. */
 #ifndef FM1B_BLE_CENTRAL
 #define FM1B_BLE_CENTRAL 0

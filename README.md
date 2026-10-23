@@ -26,7 +26,7 @@ parts it has.
 | Part | How to include it | What the app calls |
 | --- | --- | --- |
 | Bluetooth MIDI with a computer or tablet | `ble = true` (`tools/build.py --no-ble` leaves it out of one build) | `TO_BLE`, `PORT_BLE`; `plat_ble_state`, `plat_ble_connected`; `plat_ble_enable` |
-| Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device` |
+| Bluetooth MIDI devices (the FM-1 connects to a keyboard or controller) | `ble_central = true`, with `ble` | `plat_ble_scan`, `plat_ble_found`, `plat_ble_connect`, `plat_ble_disconnect`, `plat_ble_device`; `TO_BLE_HOST`, `TO_BLE_DEV`, `plat_midi_in_from` (one link at a time) |
 | USB audio: the FM-1 recorded over the cable | on unless `usb_audio_in = false` | nothing: the master output |
 | USB audio: a computer plays through the FM-1 | on unless `usb_audio_out = false` (needs the input too) | nothing: mixed after the app, at MASTER |
 | Velocity and pressure from the keys | `#define APP_TOUCH` in app.h | `touch_on`, `touch_poll`, `touch_keys`, `touch_vel`, `touch_pressure` (lib/touch.h) |
@@ -40,7 +40,8 @@ parts it has.
 
 Every firmware also counts each port's MIDI messages, in and out: `plat_midi_count(PORT_*, out)` for counters,
 `plat_midi_ago` for activity lights.
-And: `plat_midi_out_room(to)` (room in the out queues, for a sequencer's note-offs) and `plat_midi_out_link()` (a new
+And: `plat_midi_out_room(to)` (room in the out queues, each Bluetooth link's its own, for a sequencer's note-offs),
+`plat_midi_in_from()` (where the last message in came from, as an out: for MIDI thru) and `plat_midi_out_link()` (a new
 USB connection); `plat_store_size` and `plat_store_head` (an object whole or not at all; its header only); big data in
 flash beyond the store with `plat_data*`, in the data area and two more windows (`PLAT_XDATA0`, `PLAT_XDATA1`).
 
@@ -58,6 +59,11 @@ links nothing of JieLi's.
    radio's address and pairing are kept there).
 3. In the app: MIDI goes out with `TO_BLE` and comes in on `PORT_BLE`, as USB's does. For a page of devices, add
    `#define APP_BTDEV` to app.h and use lib/btdev.h (the template's REC does).
+4. With devices there are two links, the computer's and the device's. `TO_BLE` goes to both; `TO_BLE_HOST` or
+   `TO_BLE_DEV` goes to one, each with its own queue, so a slow device never holds up the computer. Both come in on
+   `PORT_BLE`, and `plat_midi_in_from()` says which. MIDI thru, with nothing sent back where it came from (a keyboard
+   played through to a phone): after each `plat_midi_in`,
+   `plat_midi_send(pkt, (TO_USB | TO_BLE) & ~plat_midi_in_from())`.
 
 Bluetooth starts at every power-on, as on M-VAVE's firmware, unless the last Bluetooth run crashed. A firmware
 that lets the player turn it off keeps that as a setting, calls `plat_ble_enable(0)` / `plat_ble_enable(1)` when it
