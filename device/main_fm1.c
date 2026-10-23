@@ -698,6 +698,7 @@ int8_t clock_fix;                                   /* fm1_clock_stock() at the 
 static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
+    uint32_t batt_t = 0;                            /* (the battery's last reading, fm1_ms) */
     uint32_t last_frame = 0;
     {
         uint32_t f = irq_save();
@@ -790,6 +791,12 @@ static void fm1_main(void)
                 knob += (a * 16 - knob) / 8;
                 master_pos = mirror_in_master(remote.master >= 0 ? (uint32_t)remote.master : (uint32_t)(knob / 4));
             }
+        }
+        if (!fm1_an.con && !fm1_an.pend && fm1_ms - batt_t >= 100u) {   /* the battery, ten times a second (plat_battery) */
+            int32_t b = fm1_adc_read(FM1_ADC_BATT);
+            batt_t = fm1_ms;
+            if (b > 0)
+                batt_raw = batt_raw ? batt_raw + (b - batt_raw) / 16 : b;
         }
         fm1b_dbg.stage = 2;                         /* (breadcrumbs: where a watchdog reset found the loop) */
         ble_poll();                                 /* Bluetooth's tasks, once started */

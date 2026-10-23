@@ -42,6 +42,26 @@ static volatile uint32_t master_pos = 2048;   /* MASTER's position, 0..4096 (mai
                                                * or the mirror's when they set it) */
 uint32_t plat_master(void) { return master_pos; }
 
+/* the battery: ADC ch3 (its divider), a slow average by the main loop. The stock firmware's thresholds, as X0X, melodee
+ * and dxsloop use them, give 0-3 bars; there is no charger line, so a USB host means power */
+static int32_t batt_raw;
+static int8_t batt_bars = -1;
+int plat_battery(void)                           /* (a level moves once the reading is 4 past its threshold) */
+{
+    static const int16_t AT[3] = {531, 561, 591};
+    if (usb.config && !usb.suspended)
+        return 4;
+    if (!batt_raw)
+        return -1;
+    if (batt_bars < 0)
+        batt_bars = (int8_t)((batt_raw >= AT[0]) + (batt_raw >= AT[1]) + (batt_raw >= AT[2]));
+    while (batt_bars < 3 && batt_raw >= AT[batt_bars] + 4)
+        batt_bars++;
+    while (batt_bars > 0 && batt_raw < AT[batt_bars - 1] - 4)
+        batt_bars--;
+    return batt_bars;
+}
+
 /* LEDs: the picture is built off-line and copied one byte per column (Felucca: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker) */
 static uint8_t led_pos[FM1_NKEY];
