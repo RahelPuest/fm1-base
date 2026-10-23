@@ -11,17 +11,18 @@
  * le_trans_data.c (its event handling and connection-parameter requests), without its test profile.
  *
  *   bt_ble_init()                 the stack is up (BT_STATUS_INIT_OK): profile, advertising
- *   ble_midi_send_many(pkts, ms, n)   USB-MIDI packets (cin | status << 8 | d1 << 16 | d2 << 24), each with
- *                                 the millisecond it happened, to the central, as many as fit one
+ *   ble_midi_send_many(link, pkts, ms, n)   USB-MIDI packets (cin | status << 8 | d1 << 16 | d2 << 24), each
+ *                                 with the millisecond it happened, to link 0, the central, as many as fit one
  *                                 notification; returns how many went; from the main loop (the stack's context)
  *   ble_midi_receive(pkt)         the firmware's: every MIDI message written by the central
- *   ble_midi_connected()          a central is connected and listens (CCC on), or (BLE_MIDI_CENTRAL) a MIDI
- *                                 device we connected to is ready
+ *   ble_midi_connected(link)      link 0: a central is connected and listens (CCC on); link 1 (BLE_MIDI_CENTRAL):
+ *                                 the MIDI device we connected to is ready
  *
  * BLE_MIDI_CENTRAL (fm1.toml ble_central = true): the FM-1 is a central too, at the same time: it scans for
  * MIDI devices (the service in their advertising), connects to the one asked for, finds its MIDI
- * characteristic and subscribes to it; what it notifies arrives as ble_midi_receive, and ble_midi_send_many
- * writes to it as well. The stack then runs both roles (ble_stack_gatt_role 2, the SDK's multi-link calls,
+ * characteristic and subscribes to it; what it notifies arrives as ble_midi_receive on cable 1 (0x10 in byte
+ * 0), and ble_midi_send_many(1, ...) writes to it, each link in notifications of its own. The stack then runs
+ * both roles (ble_stack_gatt_role 2, the SDK's multi-link calls,
  * one link each: TRANS_MULTI_BLE_EN in its config), after the SDK's apps/common/ble/multi_demo
  * (le_multi_common.c, le_multi_client.c), Copyright (c) JIELI, Apache-2.0.
  *   ble_midi_scan(on)  ble_midi_found(i, name, rssi)  ble_midi_connect(i)  ble_midi_disconnect()
@@ -157,7 +158,7 @@ static u8 cin_of(u8 st, int n)
     if (st < 0xF0) return st >> 4;
     return n == 2 ? 3 : n == 1 ? 2 : 5;          /* system common */
 }
-static void midi_parse(const u8 *b, u16 len)
+static void midi_parse(const u8 *b, u16 len, u32 cable)   /* cable: 0 the central's, 0x10 the device's */
 {
     u16 i = 1;
     u8 st = 0;
@@ -178,7 +179,7 @@ static void midi_parse(const u8 *b, u16 len)
                 continue;
             }
             if (st >= 0xF8) {
-                ble_midi_receive(0xFu | (uint32_t)st << 8);
+                ble_midi_receive(cable | 0xFu | (uint32_t)st << 8);
                 continue;
             }
             for (k = 0; k < n; k++) {
@@ -186,7 +187,8 @@ static void midi_parse(const u8 *b, u16 len)
                     return;
                 d[k] = b[i++];
             }
-            ble_midi_receive((uint32_t)cin_of(st, n) | (uint32_t)st << 8 | (uint32_t)d[0] << 16 | (uint32_t)d[1] << 24);
+            ble_midi_receive(cable | (uint32_t)cin_of(st, n) | (uint32_t)st << 8 | (uint32_t)d[0] << 16 |
+                             (uint32_t)d[1] << 24);
         }
     }
 }
@@ -196,45 +198,41 @@ static void midi_parse(const u8 *b, u16 len)
 static volatile hci_con_handle_t mc_handle;      /* the device we connected to */
 static u16 mc_value;                             /* its MIDI characteristic's value handle (0: not found yet) */
 static volatile u8 mc_state;
+static u16 mc_mtu = 20;                          /* its ATT payload, as send_mtu is the central's */
 static int mc_ready(void) { return mc_handle && mc_value && mc_state == 4; }
 #else
 static int mc_ready(void) { return 0; }
 #endif
 static int periph_ready(void) { return con_handle && CCC_GET(con_handle, H_CCC); }
-int ble_midi_connected(void) { return periph_ready() || mc_ready(); }
+int ble_midi_connected(int link) { return link ? mc_ready() : periph_ready(); }
 int ble_midi_peripheral_connected(void) { return periph_ready(); }
 int ble_midi_peripheral_linked(void) { return con_handle != 0; }   /* listening or not yet */
 static u16 send_mtu = 20;                        /* ATT payload: 23 - 3 until the exchange says more */
-int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
+int ble_midi_send_many(int link, const uint32_t *pkts, const uint16_t *ms, int n)
 {
     /* each message carries the millisecond it happened (ms[], 13 bits): a receiver that honours the
      * timestamps (CoreMIDI does) replays the original timing, however the radio bunched the packets.
      * Within one packet the times may not go backwards and span under 128 ms (the header holds the
      * first's high bits; a low byte smaller than the one before means the next 128 ms). */
     u8 buf[64], run = 0;
-    u32 len = 0, remain = 0, t0, tp;
+    u32 len = 0, remain = 0, t0, tp, mtu = send_mtu;
     int i;
-    static u32 remain_max;
-    if (!ble_midi_connected() || n <= 0)
+    static u32 remain_max[2];
+    if (!ble_midi_connected(link) || n <= 0)
         return 0;
-    /* one notification in the stack at a time: the radio sends about one a connection interval, so
-     * what piles up meanwhile goes together in the next one (with its own timestamps) instead of as a
-     * queue of small ones that each wait for a slot */
+    /* one notification in the stack at a time (a link's: each has its own buffer in the multi-link stack): the
+     * radio sends about one a connection interval, so what piles up meanwhile goes together in the next one
+     * (with its own timestamps) instead of as a queue of small ones that each wait for a slot */
 #if BLE_MIDI_CENTRAL
-    {   /* both links take it or neither (each has its own buffer in the multi-link stack) */
-        u32 r1 = 0xFFFFFFFFu, r2 = 0xFFFFFFFFu;
-        if (periph_ready())
-            ble_op_multi_att_get_remain(con_handle, &r1);
-        if (mc_ready())
-            ble_op_multi_att_get_remain(mc_handle, &r2);
-        remain = r1 < r2 ? r1 : r2;
-    }
+    ble_op_multi_att_get_remain(link ? mc_handle : con_handle, &remain);
+    if (link)
+        mtu = mc_mtu;
 #else
     ble_op_att_get_remain(&remain);
 #endif
-    if (remain > remain_max)
-        remain_max = remain;
-    if (remain < remain_max || remain < 8u)
+    if (remain > remain_max[link])
+        remain_max[link] = remain;
+    if (remain < remain_max[link] || remain < 8u)
         return 0;
     t0 = tp = ms[0] & 0x1FFFu;
     buf[len++] = (u8)(0x80 | ((t0 >> 7) & 0x3F));
@@ -261,7 +259,7 @@ int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
             m[k++] = (u8)(pkts[i] >> 16);
             m[k++] = (u8)(pkts[i] >> 24);
         }
-        if (len + k > send_mtu || len + k > sizeof buf)
+        if (len + k > mtu || len + k > sizeof buf)
             break;
         memcpy(buf + len, m, k);
         len += k;
@@ -273,13 +271,11 @@ int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n)
     }
     if (i == 0)
         return 0;
-    if (periph_ready() && SEND(con_handle, H_MIDI, buf, len, ATT_OP_AUTO_READ_CCC))
-        return 0;
 #if BLE_MIDI_CENTRAL
-    if (mc_ready())
-        SEND(mc_handle, mc_value, buf, len, ATT_OP_WRITE_WITHOUT_RESPOND);
+    if (link)
+        return SEND(mc_handle, mc_value, buf, len, ATT_OP_WRITE_WITHOUT_RESPOND) ? 0 : i;
 #endif
-    return i;
+    return SEND(con_handle, H_MIDI, buf, len, ATT_OP_AUTO_READ_CCC) ? 0 : i;
 }
 
 /* ---- ATT */
@@ -320,7 +316,7 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         break;
     case H_MIDI:
         if (buffer_size >= 2)
-            midi_parse(buffer, buffer_size);
+            midi_parse(buffer, buffer_size, 0);
         break;
     }
     return 0;
@@ -489,7 +485,7 @@ void user_client_report_data_callback(att_data_report_t *d)   /* notifications f
 {
     if (d->conn_handle == mc_handle && d->value_handle == mc_value && d->packet_type == GATT_EVENT_NOTIFICATION &&
         d->blob_length >= 2)
-        midi_parse(d->blob, d->blob_length);
+        midi_parse(d->blob, d->blob_length, 0x10u);
 }
 int l2cap_connection_update_request_just(u8 *packet, hci_con_handle_t handle) { (void)packet; (void)handle; return 0; }
 
@@ -518,6 +514,7 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
             mc_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
             mc_t0 = shim_ms();
             mc_value = 0;
+            mc_mtu = 20;
             printf("central: connected %x\n", mc_handle);
             ble_op_multi_att_send_conn_handle(mc_handle, 0, ROLE_CLIENT);
             user_client_init(mc_handle, search_ram_buffer, sizeof search_ram_buffer);
@@ -542,8 +539,11 @@ static void client_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
         bt_ble_adv_enable(1);
         break;
     case ATT_EVENT_MTU_EXCHANGE_COMPLETE:
-        if (little_endian_read_16(packet, 2) == mc_handle)
-            ble_op_multi_att_set_send_mtu(mc_handle, att_event_mtu_exchange_complete_get_MTU(packet) - 3);
+        if (little_endian_read_16(packet, 2) == mc_handle) {
+            u16 mtu = att_event_mtu_exchange_complete_get_MTU(packet) - 3;
+            ble_op_multi_att_set_send_mtu(mc_handle, mtu);
+            mc_mtu = (u16)(mtu > 64 ? 64 : mtu);
+        }
         break;
     }
 }

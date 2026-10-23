@@ -374,100 +374,123 @@ static void radio_stuck_check(void)               /* still starting after 3 s: s
 static volatile uint8_t ble_state;
 
 /* ---- MIDI both ways (ble/midi/le_midi.c); everything here runs in the main loop */
-extern int ble_midi_send_many(const uint32_t *pkts, const uint16_t *ms, int n);
-extern int ble_midi_connected(void);
+extern int ble_midi_send_many(int link, const uint32_t *pkts, const uint16_t *ms, int n);
+extern int ble_midi_connected(int link);
 static uint32_t ble_rx_count, ble_tx_count;
-static uint8_t ble_conn;                          /* ble_midi_connected(), as of the last poll */
+/* the links: 0 the computer's, 1 the device's (FM1B_BLE_CENTRAL); each with its out (plat.h TO_BLE_*) */
+#define BLINKS (1 + FM1B_BLE_CENTRAL)
+static const uint32_t BLE_TO[2] = {TO_BLE_HOST, TO_BLE_DEV};
+static uint8_t ble_conn;                          /* bit l: ble_midi_connected(l), as of the last poll */
 #define BQ 64u
 static uint32_t ble_in_q[BQ];
 static uint32_t bi_w, bi_r;
-void ble_midi_receive(uint32_t pkt)               /* from the stack (in ble_poll): for plat_midi_in */
+void ble_midi_receive(uint32_t pkt)               /* from the stack (in ble_poll): for plat_midi_in. The device's
+                                                   * packets carry cable 1, which tells them from the computer's */
 {
     if (bi_w - bi_r < BQ) {
-        ble_in_q[bi_w % BQ] = pkt & ~0xF0u;
+        ble_in_q[bi_w % BQ] = pkt & ~0xE0u;
         bi_w++;
         ble_rx_count++;
     }
 }
-static int ble_midi_in(uint32_t *pkt)
+static int ble_midi_in(uint32_t *pkt, uint32_t *from)   /* from: its link's out, TO_BLE_HOST or TO_BLE_DEV */
 {
+    uint32_t p;
     if (bi_r == bi_w)
         return 0;
-    *pkt = ble_in_q[bi_r % BQ];
+    p = ble_in_q[bi_r % BQ];
     bi_r++;
+    *from = (p >> 4 & 0xFu) == 1u ? TO_BLE_DEV : TO_BLE_HOST;
+    *pkt = p & ~0xF0u;
     return 1;
 }
 /* out: every message with the millisecond it was queued (fm1_ms), which goes with it as its BLE MIDI
  * timestamp. MIDI clock waits in its own short ring (a few ticks at most: later than that they are no
- * use) so a stream of clock never holds up notes; the drain merges the two in time order. */
-static uint32_t ble_out_q[BQ];
-static uint16_t ble_out_ms[BQ];
-static uint32_t bo_w, bo_r;
+ * use) so a stream of clock never holds up notes; the drain merges the two in time order. Each link has its
+ * own two, so a slow one holds up only itself. */
 #define BCQ 4u
-static uint16_t ble_clk_ms[BCQ];
-static volatile uint32_t bc_w, bc_r;
-static uint32_t ble_midi_out_room(void)          /* free slots in the out ring; 0: nobody listening */
+static struct ble_out {
+    uint32_t q[BQ];
+    uint16_t ms[BQ];
+    uint32_t w, r;
+    uint16_t clk_ms[BCQ];
+    volatile uint32_t cw, cr;
+} ble_out[BLINKS];
+static uint32_t ble_midi_out_room(uint32_t to)   /* free slots in the out rings of to's links: the fewest among
+                                                   * those listening; 0: none is */
 {
-    return ble_state == BLE_READY && ble_conn ? BQ - (bo_w - bo_r) : 0u;
+    uint32_t room = 0xFFFFFFFFu;
+    int l;
+    for (l = 0; l < BLINKS; l++)
+        if ((to & BLE_TO[l]) && (ble_conn >> l & 1u) && BQ - (ble_out[l].w - ble_out[l].r) < room)
+            room = BQ - (ble_out[l].w - ble_out[l].r);
+    return ble_state == BLE_READY && room != 0xFFFFFFFFu ? room : 0u;
 }
-static void ble_midi_tap(uint32_t pkt)            /* main loop (locked) or the tick; nothing queues for a central not there */
+static void ble_midi_tap(uint32_t pkt, uint32_t to)   /* main loop (locked) or the tick; nothing queues for a link
+                                                       * not there */
 {
     uint16_t ms = (uint16_t)(fm1_ms & 0x1FFFu);
-    if (ble_state != BLE_READY || !ble_conn)
+    int l;
+    if (ble_state != BLE_READY)
         return;
-    if (((pkt >> 8) & 0xFFu) == 0xF8u) {
-        if (bc_w - bc_r < BCQ) {
-            ble_clk_ms[bc_w % BCQ] = ms;
+    for (l = 0; l < BLINKS; l++) {
+        struct ble_out *o = &ble_out[l];
+        if (!(to & BLE_TO[l]) || !(ble_conn >> l & 1u))
+            continue;
+        if (((pkt >> 8) & 0xFFu) == 0xF8u) {
+            if (o->cw - o->cr < BCQ) {
+                o->clk_ms[o->cw % BCQ] = ms;
+                RING_PUBLISH();
+                o->cw++;
+            }
+        } else if (o->w - o->r < BQ) {
+            o->q[o->w % BQ] = pkt;
+            o->ms[o->w % BQ] = ms;
             RING_PUBLISH();
-            bc_w++;
+            o->w++;
         }
-        return;
-    }
-    if (bo_w - bo_r < BQ) {
-        ble_out_q[bo_w % BQ] = pkt;
-        ble_out_ms[bo_w % BQ] = ms;
-        RING_PUBLISH();
-        bo_w++;
     }
 }
 static int ms_before(uint16_t a, uint16_t b) { return ((uint32_t)(b - a) & 0x1FFFu) < 4096u && a != b; }
-static void ble_midi_drain(void)                  /* main loop: what waits, as many notifications as the stack takes */
+static void ble_midi_drain(int l)                 /* main loop: what waits for link l, as many notifications as the
+                                                   * stack takes */
 {
+    struct ble_out *o = &ble_out[l];
     int round;
     for (round = 0; round < 4; round++) {
         uint32_t pkts[16], n = 0, ni = 0, ci, nw, cw, sent, k;
         uint16_t ms[16];
         uint8_t is_clk[16];
         uint32_t f = plat_lock();                 /* a snapshot: the tick may add meanwhile */
-        nw = bo_w;
-        cw = bc_w;
+        nw = o->w;
+        cw = o->cw;
         plat_unlock(f);
-        ci = bc_r;
-        ni = bo_r;
+        ci = o->cr;
+        ni = o->r;
         while (n < 16u && (ni != nw || ci != cw)) {
-            int take_clk = ci != cw && (ni == nw || ms_before(ble_clk_ms[ci % BCQ], ble_out_ms[ni % BQ]));
+            int take_clk = ci != cw && (ni == nw || ms_before(o->clk_ms[ci % BCQ], o->ms[ni % BQ]));
             if (take_clk) {
                 pkts[n] = 0xFu | 0xF8u << 8;
-                ms[n] = ble_clk_ms[ci % BCQ];
+                ms[n] = o->clk_ms[ci % BCQ];
                 is_clk[n++] = 1;
                 ci++;
             } else {
-                pkts[n] = ble_out_q[ni % BQ];
-                ms[n] = ble_out_ms[ni % BQ];
+                pkts[n] = o->q[ni % BQ];
+                ms[n] = o->ms[ni % BQ];
                 is_clk[n++] = 0;
                 ni++;
             }
         }
         if (!n)
             return;
-        sent = (uint32_t)ble_midi_send_many(pkts, ms, (int)n);
+        sent = (uint32_t)ble_midi_send_many(l, pkts, ms, (int)n);
         if (!sent)
             return;                               /* the stack is full: what did not go stays for the next poll */
         for (k = 0; k < sent; k++) {
             if (is_clk[k])
-                bc_r++;
+                o->cr++;
             else
-                bo_r++;
+                o->r++;
         }
         RING_PUBLISH();
         ble_tx_count += sent;
@@ -525,16 +548,23 @@ static void ble_start(void)
 /* the main loop's turn: timers, then every BT task that can run */
 static void ble_poll(void)
 {
+    uint8_t conn = 0;
+    int l;
     if (ble_state == BLE_OFF)
         return;
     shim_timers();
     shim_run();
-    ble_conn = (uint8_t)(ble_state == BLE_READY && ble_midi_connected());
-    if (!ble_conn) {
-        bo_r = bo_w;                              /* a central gone: nothing stale for the next one */
-        bc_r = bc_w;
+    for (l = 0; l < BLINKS; l++)
+        if (ble_state == BLE_READY && ble_midi_connected(l))
+            conn |= (uint8_t)(1u << l);
+    ble_conn = conn;                              /* (once: the tick reads it) */
+    for (l = 0; l < BLINKS; l++) {
+        if (!(conn >> l & 1u)) {
+            ble_out[l].r = ble_out[l].w;          /* a link gone: nothing stale for the next one */
+            ble_out[l].cr = ble_out[l].cw;
+        }
+        ble_midi_drain(l);
     }
-    ble_midi_drain();
 #if FM1B_BLE_CENTRAL
     {
         extern void ble_midi_poll(void);

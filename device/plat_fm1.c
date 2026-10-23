@@ -213,7 +213,7 @@ void plat_yield(void)
 
 /* MIDI: the rings carry 4-byte USB-MIDI event packets, byte 0 = cable / CIN. USB and the TRS jack share midi_in_q
  * (both from TIMER5); the jack's packets carry cable 1 (midi_uart.c), which the single-jack USB descriptor never
- * does. Bluetooth has its own queue (radio.c, main loop). */
+ * does. Bluetooth has its own queue (radio.c, main loop), and its out rings, one a link. */
 /* each port's messages, in and out (plat_midi_count): for the app's MIDI lights and counters */
 static uint32_t midi_n[NPORTS][2], midi_t[NPORTS][2];
 static void midi_counted(int port, int out, uint32_t pkt)
@@ -233,11 +233,13 @@ uint32_t plat_midi_out_room(uint32_t to)
     uint32_t room = 0xFFFFFFFFu, r;
     if ((to & TO_USB) && (r = midi_out_room()) && r < room)
         room = r;
-    if ((to & TO_BLE) && (r = ble_midi_out_room()) && r < room)
+    if ((to & TO_BLE) && (r = ble_midi_out_room(to)) && r < room)
         room = r;
     return room == 0xFFFFFFFFu ? 0u : room;
 }
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
+static uint32_t midi_in_from;                     /* plat_midi_in_from: the last one's link, as an out */
+uint32_t plat_midi_in_from(void) { return midi_in_from; }
 int plat_midi_in(uint32_t *pkt, int *port)
 {
     int from;
@@ -246,9 +248,10 @@ int plat_midi_in(uint32_t *pkt, int *port)
         RING_PUBLISH();
         mi_r++;
         from = (p >> 4 & 0xFu) == 1u ? PORT_TRS : PORT_USB;
+        midi_in_from = from == PORT_USB ? TO_USB : 0u;
         *pkt = p & ~0xF0u;
     }
-    else if (ble_midi_in(pkt))
+    else if (ble_midi_in(pkt, &midi_in_from))
         from = PORT_BLE;
     else
         return 0;
@@ -267,7 +270,7 @@ void plat_midi_send(uint32_t pkt, uint32_t to)    /* the main loop's and the tic
         midi_counted(PORT_USB, 1, pkt);
     }
     if (to & TO_BLE) {
-        ble_midi_tap(pkt);
+        ble_midi_tap(pkt, to);
         midi_counted(PORT_BLE, 1, pkt);
     }
     if (!in_tick)
