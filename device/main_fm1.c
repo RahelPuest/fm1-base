@@ -22,6 +22,8 @@ struct fm1b_dbg {
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
 int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
+static uint8_t power_boot[4];                       /* ANA_CON0, CON5, CON7, WLDO12_AUTO as the start found them */
+static int8_t power_fix;                            /* fm1_power_stock(): 1 the DC-DC turned on, 0 it was on */
 static uint32_t clock_boot[6];                      /* the clock's registers as the boot loader left them (fm1_clock_read) */
 static uint8_t rails_boot[2], rails_tries;          /* VDC14's and SYSVDD's registers as the boot loader left them, and
                                                      * the raises it took to read back M-VAVE's levels (the log) */
@@ -207,7 +209,7 @@ static void hexs(char *b, uint32_t v)
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
  * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
- * clock's as the boot loader left them, then
+ * power setup's and the clock's as the boot loader left them, then
  * Bluetooth's log, the oldest first (it survives a reset) */
 static void log_line_send(const char *t)
 {
@@ -304,6 +306,24 @@ static int log_frame(const uint8_t *p, uint32_t n)
         }
         *q++ = 'x';
         *q++ = (char)('0' + rails_tries);
+        *q = 0;
+        log_line_send(r);
+    }
+    {   /* the power setup as the start found it (fm1_power_stock): "power boot FB 44 A5 C0 fix 0" is M-VAVE's */
+        static const char H[] = "0123456789ABCDEF";
+        char r[40], *q = r;
+        const char *t = "power boot ";
+        uint32_t j;
+        while (*t)
+            *q++ = *t++;
+        for (j = 0; j < 4u; j++) {
+            *q++ = H[power_boot[j] >> 4];
+            *q++ = H[power_boot[j] & 15u];
+            *q++ = ' ';
+        }
+        for (t = "fix "; *t; )
+            *q++ = *t++;
+        *q++ = (char)('0' + power_fix);
         *q = 0;
         log_line_send(r);
     }
@@ -746,6 +766,12 @@ static void fm1_main(void)
                                                     /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
                                                      * come back corrupted under load: the radio's trim crashed
                                                      * CTL-1 0.6 s into most Bluetooth starts */
+        power_boot[0] = fm1_p33_read(FM1_P3_ANA_CON0);
+        power_boot[1] = fm1_p33_read(FM1_P3_ANA_CON5);
+        power_boot[2] = fm1_p33_read(FM1_P3_ANA_CON7);
+        power_boot[3] = fm1_p33_read(FM1_P3_WLDO12_AUTO);
+        power_fix = (int8_t)fm1_power_stock();      /* the rest of M-VAVE's power setup: the 1.3 V supply on its DC-DC,
+                                                     * VDDIO 3.2 V, WiFi's regulator automatic (fm1_sys.h) */
         fm1_clock_read(clock_boot);
         clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
