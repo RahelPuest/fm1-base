@@ -694,6 +694,7 @@ static void splash(void)                           /* the app's (APP_SPLASH), or
     lcd_sync();
 }
 
+int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
 static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
@@ -708,6 +709,7 @@ static void fm1_main(void)
             if ((fm1_vdc14() == 7u && fm1_sysvdd() == 15u) || rails_tries == 3u)
                 break;                              /* (read back: a raise that did not take is tried again) */
         }
+        clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
                                                     /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
                                                      * come back corrupted under load: the radio's trim crashed
                                                      * CTL-1 0.6 s into most Bluetooth starts */

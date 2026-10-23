@@ -51,6 +51,7 @@
 #include "fm1_flash.h"
 #include "fm1_xip.h"
 #include "fm1_perf.h"
+#include "fm1_clock.h"
 
 #include "libc.c"
 #include "lcd.c"
