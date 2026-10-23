@@ -541,6 +541,13 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
 static uint32_t cpu_pct;
 uint32_t plat_cpu_pct(void) { return cpu_pct; }
 uint32_t plat_xruns(void) { return 0; }
+uint32_t plat_ticks24(void)                     /* the host's monotonic clock, at the device's rate */
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)t.tv_sec * (PLAT_TICKS_PER_US * 1000000u) + (uint32_t)t.tv_nsec / 1000u * PLAT_TICKS_PER_US +
+           (uint32_t)t.tv_nsec % 1000u * PLAT_TICKS_PER_US / 1000u;
+}
 
 /* -------------------------------------------------------------- app --- */
 #define ANN_NAME APP_NAME " " APP_VERSION

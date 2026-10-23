@@ -192,6 +192,13 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok */
 uint32_t plat_cpu_pct(void);
 uint32_t plat_xruns(void);
 
+/* a free-running count of PLAT_TICKS_PER_US ticks a microsecond, for timing spans shorter than plat_ms can: a part of
+ * the render, say. Device: TIMER4, from the 24 MHz crystal (one register read); host: its monotonic clock, at the same
+ * rate. No lock and no state, so the audio interrupt and the tick may call it too. It wraps every 2^32 ticks (179 s):
+ * a span is the unsigned difference of two reads */
+#define PLAT_TICKS_PER_US 24u
+uint32_t plat_ticks24(void);
+
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
