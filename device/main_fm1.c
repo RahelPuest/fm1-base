@@ -17,7 +17,7 @@ static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(4)));
 #define DBG_MAGIC 0x44424731u                       /* "DBG1": read with `fm1t memr` */
 struct fm1b_dbg {
     uint32_t magic, halves, max_us, nested, in_audio, late, timer_irqs, ui_frames;
-    uint32_t last_us, cpu_q8, boots, stage;
+    uint32_t last_us, cpu_q12, boots, stage;
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
@@ -79,8 +79,11 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     if (us > budget * 9u / 10u)
         app_overload();                             /* over 90 % of its time: the app sheds what it can */
 #endif
-    fm1b_dbg.cpu_q8 = (fm1b_dbg.cpu_q8 * 15u + (us * 256u) / budget) / 16u;
-    audio_cpu_pct = (fm1b_dbg.cpu_q8 * 100u) >> 8;
+    /* cpu_q12 is the load smoothed over about 16 blocks, in 1/4096 of the budget. The +8 rounds the division, so
+     * a steady load settles within half a percent of its true value from either side. us * 4096 wraps above about
+     * 1 s in one block, which only an interrupt stuck that long reaches: the reading is then wrong until it decays. */
+    fm1b_dbg.cpu_q12 = (fm1b_dbg.cpu_q12 * 15u + us * 4096u / budget + 8u) / 16u;
+    audio_cpu_pct = (fm1b_dbg.cpu_q12 * 100u + 2048u) >> 12;   /* whole percent, rounded to nearest */
     fm1b_dbg.halves++;
     fm1b_dbg.last_us = us;
     if (us > fm1b_dbg.max_us)
