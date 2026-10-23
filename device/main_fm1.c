@@ -21,6 +21,8 @@ struct fm1b_dbg {
     uint32_t crash_seen;                            /* the crash count already reported at a boot */
 } fm1b_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;                           /* two failed boots: no audio, USB on (safe_main) */
+int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
+static uint32_t clock_boot[6];                      /* the clock's registers as the boot loader left them (fm1_clock_read) */
 static uint8_t rails_boot[2], rails_tries;          /* VDC14's and SYSVDD's registers as the boot loader left them, and
                                                      * the raises it took to read back M-VAVE's levels (the log) */
 static uint32_t wdt_stage __attribute__((section(".noinit")));   /* the main loop's step when the watchdog fired:
@@ -204,7 +206,8 @@ static void hexs(char *b, uint32_t v)
 }
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
- * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), then
+ * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
+ * clock's as the boot loader left them, then
  * Bluetooth's log, the oldest first (it survives a reset) */
 static void log_line_send(const char *t)
 {
@@ -303,6 +306,37 @@ static int log_frame(const uint8_t *p, uint32_t n)
         *q++ = (char)('0' + rails_tries);
         *q = 0;
         log_line_send(r);
+    }
+    {   /* the clock as the boot loader left it, and what the start did (fm1_clock.h): "sys 06" is M-VAVE's 360 MHz */
+        char r[44];
+        uint32_t j;
+        const char *t;
+        for (j = 0; j < 3u; j++) {
+            char *q = r;
+            t = j == 0u ? "clock boot sys " : j == 1u ? "clock pll1 " : "clock pll0 ";
+            while (*t)
+                *q++ = *t++;
+            if (j == 0u) {
+                hexs(q, clock_boot[0] << 24);
+                q += 2;
+                for (t = " mux "; *t; )
+                    *q++ = *t++;
+                hexs(q, clock_boot[1]);
+                q += 8;
+                for (t = " fix "; *t; )
+                    *q++ = *t++;
+                *q++ = clock_fix < 0 ? '-' : ' ';
+                *q++ = (char)('0' + (clock_fix < 0 ? -clock_fix : clock_fix));
+            } else {
+                hexs(q, clock_boot[2u * j]);
+                q += 8;
+                *q++ = ' ';
+                hexs(q, clock_boot[2u * j + 1u]);
+                q += 8;
+            }
+            *q = 0;
+            log_line_send(r);
+        }
     }
     if (wdt_stage) {
         static const char *const ST[7] = {"?", "?", "Bluetooth", "the app's loop", "USB", "a frame", "input"};
@@ -694,7 +728,6 @@ static void splash(void)                           /* the app's (APP_SPLASH), or
     lcd_sync();
 }
 
-int8_t clock_fix;                                   /* fm1_clock_stock() at the start: 0 stock already, 1 set, -1 failed */
 static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
@@ -710,10 +743,11 @@ static void fm1_main(void)
             if ((fm1_vdc14() == 7u && fm1_sysvdd() == 15u) || rails_tries == 3u)
                 break;                              /* (read back: a raise that did not take is tried again) */
         }
-        clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
                                                     /* then 1.38 V (fm1_sys.h). At the boot loader's, flash fetches
                                                      * come back corrupted under load: the radio's trim crashed
                                                      * CTL-1 0.6 s into most Bluetooth starts */
+        fm1_clock_read(clock_boot);
+        clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
         irq_restore(f);
         if (flash_ok) {
