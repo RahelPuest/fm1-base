@@ -18,6 +18,7 @@
  *                           FM-1 2026-10-16: no lost frame); FM1B_UAC_48K 0 (48 kHz too: needs the resampler's filter)
  *   FM1B_UAC_DEEP 0         1: the USB audio input keeps a half more in hand, for renders that take most of
  *                           their time (its 4 KB ring in the app's pool; 5.8 ms more latency)
+ *   FM1B_UAC_RING_POOL 0    1: the USB audio input's 2 KB ring in the pool, its RAM left to the app
  *   FM1B_UAC_OUT 1          USB audio output: the computer plays through the FM-1, mixed after the app, at MASTER
  *   FM1B_TRS 1              MIDI in on the TRS jack
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
@@ -87,7 +88,11 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
                                    * otherwise run its ring dry: holds in the recording); its 4 KB ring in the pool */
 #endif
 #define FELUCCA_UAC_DEEP FM1B_UAC_DEEP
-#if FM1B_UAC_DEEP
+#ifndef FM1B_UAC_RING_POOL
+#define FM1B_UAC_RING_POOL 0      /* 1: the USB audio input's ring (2 KB; deep: 4) in the pool, not in RAM (an app whose
+                                   * RAM is full: fm1-radio) */
+#endif
+#if FM1B_UAC_DEEP || FM1B_UAC_RING_POOL
 #define FELUCCA_UAC_RING_ATTR PLAT_POOL
 #endif
 #ifndef FELUCCA_ID
