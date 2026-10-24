@@ -123,9 +123,10 @@ DSP units built at -O2), `ble`, `ble_central`, `wifi`, `usb_audio_in` / `usb_aud
    listens on the FM-1 itself.
 
 Felucca's safety stays, from fm1-base: the boot guard (two failed starts: safe mode with USB on), the crash screen
-and record, the watchdog, the USB soft key into the chip's update mode, and the installer's way back to M-VAVE's
-firmware. Update mode from the keys is m-bootloader's (REC held at power-on), which the installer offers; Felucca's
-OCT- and OCT+ held 5 s is gone.
+and record, the watchdog, the USB soft key into the chip's update mode, REC held at power-on for update mode (also in
+safe mode), and the installer's way back to M-VAVE's firmware. REC at power-on is m-bootloader's key too (which the
+installer offers, and which takes it first when installed): one key for update mode on any FM-1. Felucca's OCT- and
+OCT+ held 5 s is gone (OCT- + OCT+ held at power-on still opens the panel setup).
 
 ## What fm1-base has for features a fork may have added
 

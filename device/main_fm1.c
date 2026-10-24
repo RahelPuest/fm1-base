@@ -672,11 +672,12 @@ static void enter_uboot(const char *why)
 
 /* SAFE MODE: the app crashed (or hung) twice while starting. Nothing that makes sound runs: no audio,
  * no engine, no UI; USB is on, so the web installer (this firmware's, or the stock one) and M-UPGRADE can
- * reach it. PLAY tries the app again. The chip's own update mode stays the last resort (fm1_cstart). */
+ * reach it. PLAY tries the app again, REC the chip's own update mode (as at power-on); it stays the last resort too
+ * (fm1_cstart). */
 static void safe_main(void)
 {
     char b[24];
-    uint32_t t0, play;
+    uint32_t t0, play, rec;
     lcd_fill(0, 0, 240, 240, C_BLACK);
     sys_box(0, 18, 240, SYS_B, APP_NAME " SAFE MODE", C_HI, 1);
     sys_box(0, 52, 240, SYS_S, "IT CRASHED TWICE", C_WHITE, 1);
@@ -685,6 +686,7 @@ static void safe_main(void)
     sys_box(0, 122, 240, SYS_S, "REINSTALL FROM THE", C_WHITE, 1);
     sys_box(0, 142, 240, SYS_S, "WEB INSTALLER.", C_WHITE, 1);
     sys_box(0, 172, 240, SYS_S, "PLAY: TRY AGAIN", C_HI, 1);
+    sys_box(0, 190, 240, SYS_S, "REC: UPDATE MODE", C_HI, 1);
     if (fm1_crash.magic == FM1_CRASH_MAGIC) {
         b[0] = 'P';
         b[1] = 'C';
@@ -699,6 +701,7 @@ static void safe_main(void)
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     play = 1u << panel.btn[B_PLAY];
+    rec = 1u << panel.btn[B_REC];
     t0 = fm1_ms;
     for (;;) {
         fm1_wdt_feed();
@@ -727,6 +730,8 @@ static void safe_main(void)
         }
         if (usb.uboot_req)
             enter_uboot("UBOOT (USB)");
+        if ((fm1_in.buttons & rec) && fm1_ms - t0 > 500u)
+            enter_uboot("UPDATE MODE (REC)");
     }
 }
 
@@ -835,6 +840,10 @@ static void fm1_main(void)
     fm1_delay_ms(30);
     if ((fm1_in.buttons & 3u) == 3u)
         panel_setup();                              /* OCT- + OCT+ held at power-on */
+    if (fm1_in.buttons & (1u << panel.btn[B_REC]))
+        enter_uboot("UPDATE MODE (REC)");           /* REC held at power-on: the chip's update mode, the same key as
+                                                     * m-bootloader's (which takes it first when it is installed): a way
+                                                     * in when this firmware starts but its USB cannot be reached */
     fm1_delay_ms(400);
     radio_boot_note();                                /* what ended the last Bluetooth run, into its log */
     if (!radio_last_bad && APP_BLE_AT_BOOT)
