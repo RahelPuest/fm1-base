@@ -120,15 +120,24 @@ static void wifi_log_watch(const char *s)         /* radio.c shim_log: the first
     last = shim_ms();
 }
 
-/* the station's MAC: the BT address kept in syscfg (radio.c), made a locally administered unicast one; without it
- * the library joins as 00:00:00:00:00:00 */
+/* the station's MAC (without one the library joins as 00:00:00:00:00:00): made from the chip's unique ID, so the
+ * same every start, update and firmware (it was the BT address kept in syscfg, random and remade whenever the store
+ * was: a router's list filled with "new" FM-1s); no ID, the BT address. A locally administered unicast one */
 int init_net_device_mac_addr(char *macaddr, char ap_mode)
 {
-    const uint8_t *b = bt_get_mac_addr();
-    unsigned i;
+    const uint8_t *u = plat_chip_uid();
+    unsigned i = 1;
     (void)ap_mode;
-    for (i = 0; i < 6u; i++)
-        macaddr[i] = (char)b[i];
+    while (u && i < 16u && u[i] == u[0])          /* (a part that does not answer 0x4B: all FF or all 0) */
+        i++;
+    if (u && i < 16u) {
+        for (i = 0; i < 6u; i++)                  /* the ID's 16 bytes folded into 6 */
+            macaddr[i] = (char)(u[i] ^ u[i + 6u] ^ (i < 4u ? u[i + 12u] : 0));
+    } else {
+        const uint8_t *b = bt_get_mac_addr();
+        for (i = 0; i < 6u; i++)
+            macaddr[i] = (char)b[i];
+    }
     macaddr[0] = (char)(((uint8_t)macaddr[0] & 0xFC) | 0x02);
     macaddr[5] ^= 0x01;
     return 0;

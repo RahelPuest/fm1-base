@@ -50,6 +50,9 @@
 #include "fm1_audio.h"
 #include "fm1_adc.h"
 #include "fm1_lcd_hw.h"
+#if FM1B_WIFI
+#define FL_UID 1                          /* the flash's unique ID: the WiFi MAC (plat_chip_uid) */
+#endif
 #include "fm1_flash.h"
 #include "fm1_xip.h"
 #include "fm1_perf.h"
@@ -118,6 +121,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 
 static uint8_t flash_ok;          /* JEDEC id matched at boot */
+#if FM1B_WIFI
+static uint8_t flash_uid[16];     /* the flash's factory unique ID (plat_chip_uid), read at boot */
+#endif
 static void audio_silence(void);
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {

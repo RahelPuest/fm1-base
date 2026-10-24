@@ -305,6 +305,11 @@ uint32_t plat_analog_mask(void)
     return m;
 }
 
+#if FM1B_WIFI
+const uint8_t *plat_chip_uid(void) { return flash_ok ? flash_uid : 0; }
+#else
+const uint8_t *plat_chip_uid(void) { return 0; }
+#endif
 int plat_store_load(uint32_t obj, void *dst, uint32_t max) { return flash_ok ? st_load(obj, dst, max) : -1; }
 int plat_store_head(uint32_t obj, void *dst, uint32_t n) { return flash_ok ? st_load_head(obj, dst, n) : -1; }
 int plat_store_size(uint32_t obj) { return flash_ok ? st_size(obj) : -1; }

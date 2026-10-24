@@ -187,6 +187,10 @@ void plat_usb_audio_full(int on);
 void plat_sense(int on);
 uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 / PA8; the top row is probed) */
 
+/* 16 bytes unique to this FM-1 (its flash part's factory ID; the same across updates, firmwares and a wiped store):
+ * for an address that must not change (the WiFi MAC); 0 = unknown (and in a build without WiFi) */
+const uint8_t *plat_chip_uid(void);
+
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad (an empty object is
                                                                * none: a restore writes one for an absent object) */

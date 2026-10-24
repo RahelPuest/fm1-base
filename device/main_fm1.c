@@ -782,6 +782,10 @@ static void fm1_main(void)
         fm1_clock_read(clock_boot);
         clock_fix = (int8_t)fm1_clock_stock();      /* the stock 360 MHz, whichever bootloader started us (fm1_clock.h) */
         flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
+#if FM1B_WIFI
+        if (flash_ok)
+            FL_FAR(fl_uid_ram)(flash_uid);
+#endif
         irq_restore(f);
         if (flash_ok) {
 #if FM1B_BACKUP
