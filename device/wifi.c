@@ -420,6 +420,7 @@ void plat_wifi_on(int on)
             wifi_off();
             shim_log("WiFi: off");
         }
+        radio_settle(1);                          /* off while starting: the interrupts back (radio.c) */
         radio_clean_exit();
     }
 }

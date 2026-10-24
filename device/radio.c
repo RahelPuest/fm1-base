@@ -284,6 +284,14 @@ static uint8_t radio_starting;                    /* started, not ready yet (rad
 /* BLE_MASK_AT_START: mask the input timer while the radio calibrates. fm1-ble needed it while the RF
  * trim ran from the flash (the real cause of its crashes, notes/06); with the trim in RAM it should
  * not be, and without it keys, USB and the screen do not pause when Bluetooth starts. */
+#if SHIM_WIFI                                     /* WiFi: its calibration undisturbed by the input timer and the
+                                                  * audio render (fm1-radio: a tester's FM-1 crashed in its TX
+                                                  * calibration with an interrupt taken; masked, the first join took
+                                                  * 15 s, not minutes). Keys, USB and the sound pause meanwhile */
+#define BLE_MASK_AT_START 1
+#define MASK_ALNK0_AT_START 1
+static void audio_silence(void);
+#endif
 #ifndef BLE_MASK_AT_START
 #define BLE_MASK_AT_START 0
 #endif
@@ -324,6 +332,10 @@ static void radio_begin(const char *what)
     {
         uint32_t f = irq_save();
         fm1_irq_mask(FM1_IRQ_TIMER5);
+#ifdef MASK_ALNK0_AT_START
+        audio_silence();                          /* (the DMA loops the buffer meanwhile) */
+        fm1_irq_mask(FM1_IRQ_ALNK0);
+#endif
         irq_restore(f);
         irqs_masked = 1;
     }
@@ -355,6 +367,9 @@ static void radio_settle(int ready)
     irqs_masked = 0;
     f = irq_save();
     fm1_irq_unmask(FM1_IRQ_TIMER5);
+#ifdef MASK_ALNK0_AT_START
+    fm1_irq_unmask(FM1_IRQ_ALNK0);
+#endif
     irq_restore(f);
     shim_log(ready ? "irqs back: ready" : "irqs back: 15 s, not ready");
 }
