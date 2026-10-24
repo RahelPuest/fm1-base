@@ -55,6 +55,7 @@ extern char wifi_get_rssi(void);
 extern int wifi_scan_req(void);
 extern struct wifi_scan_ssid_info *wifi_get_scan_result(u32 *ssid_cnt);
 extern void wifi_clear_scan_result(void);
+extern void free(void *p);                       /* (the shim's heap: wifi_get_scan_result's copy) */
 extern void wifi_set_tx_rate_control_tab(u32 tab);
 extern void lwip_get_netif_info(u8 is_wireless, struct netif_info *info);
 extern void wifi_set_frame_cb(void (*cb)(void *rxwi, void *wh, void *data, u32 len, void *priv), void *priv);
@@ -344,8 +345,12 @@ static void wifi_scan_collect(void)
         }
         wf_scan_n++;
     }
-    if (r)
+    if (r) {
         wifi_clear_scan_result();
+        free(r);                                  /* the results are a copy of the caller's (the SDK's demos free it
+                                                   * too): kept, every scan leaked 2.3 KB, and the library's own
+                                                   * scans while connected ran the heap out overnight */
+    }
     wifi_scans++;
 }
 
