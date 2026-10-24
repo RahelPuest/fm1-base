@@ -396,6 +396,7 @@ const char *plat_wifi_ssid(void) { return wf_ssid; }
 uint32_t plat_wifi_ip(void) { return wf_st == WIFI_CONNECTED ? 0x2A01A8C0u : 0; }   /* 192.168.1.42 */
 int plat_wifi_rssi(void) { return wf_st == WIFI_CONNECTED ? -48 : 0; }
 int plat_wifi_scan(void) { return wf_st >= WIFI_ON ? 0 : -1; }
+int plat_wifi_found_channel(int i) { return wf_st >= WIFI_ON && i >= 0 && i <= 1 ? (i ? 11 : 6) : 0; }
 int plat_wifi_found(int i, char *ssid, int *rssi, int *secured)
 {
     static const char *const N[2] = {"Home", "Cafe"};

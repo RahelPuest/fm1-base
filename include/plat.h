@@ -126,6 +126,7 @@ int plat_wifi_rssi(void);              /* connected: the signal */
 int plat_wifi_scan(void);              /* the networks around: plat_wifi_found once it is done (0 = asked) */
 int plat_wifi_found(int i, char *ssid, int *rssi, int *secured);   /* the scan's network i (ssid: 33 bytes), the
                                                                      * strongest first; 0 = none */
+int plat_wifi_found_channel(int i);    /* its channel (1..14), 0 = none */
 int plat_wifi_join(const char *ssid, const char *pass);   /* pass 0: the saved one's, or none; kept once joined */
 int plat_wifi_saved(int i, char *ssid);   /* the networks kept, the most recent first; 0 = none */
 void plat_wifi_forget(int i);

@@ -573,7 +573,9 @@ static int wifi_frame(const uint8_t *p, uint32_t n)
             if (!plat_wifi_found(i, ssid, &rssi, &sec))
                 break;
             q = wifi_num(b, rssi, e);
-            q = wifi_cat(q, sec ? " 1 " : " 0 ", e);
+            q = wifi_cat(q, sec ? " 1 ch" : " 0 ch", e);   /* signal, secured, channel, name */
+            q = wifi_num(q, plat_wifi_found_channel(i), e);
+            q = wifi_cat(q, " ", e);
             wifi_cat(q, ssid, e);
             wifi_line(b);
         }
