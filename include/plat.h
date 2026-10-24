@@ -213,15 +213,18 @@ uint32_t plat_ticks24(void);
 
 /* The second core (fm1.toml cpu2 = true: FM1B_CPU2; felucca-bsp's chip/fm1_cpu1.h, Melodee's): a worker for a part of
  * the render. Start it in app_init (the one time it may start: at power-on, before the audio and the timers); the
- * render hands it a job, does its own share, then waits for it. One job at a time. On a unit whose second core misreads
- * the RAM, or after a fault on it or a job not back in 8 ms, it is given up (held; the render does the work itself)
- * and barred: one core at every start until power-off, or until a new build (FM1B_BUILD). After a failed start, one
- * core. Host: a job runs at once, in order (an app with its own simulation defines APP_HOST_CPU2 and has them all). */
+ * render hands it a job, does its own share, then waits for it. One job at a time. A failure (it misread a job, it
+ * faulted, a job was not back in 8 ms, it did not answer at its start) restarts the FM-1, the reason in the crash
+ * record (vec 0x101..0x105: gave_up's numbers below); two failed starts are safe mode. With cpu2_fallback = true
+ * instead: it is given up (held; the render does the work itself) and barred, one core at every start until
+ * power-off or a new build (FM1B_BUILD), and one core after a failed start. Host: a job runs at once, in order (an app
+ * with its own simulation defines APP_HOST_CPU2 and has them all). */
 int plat_cpu2_set(int on);             /* on 1, in app_init: 0 = it runs; -1 = one core (not now, barred, or it did not
                                         * answer). On 0: held (from the main loop: no job outstanding) */
 int plat_cpu2_on(void);                /* it takes jobs */
 int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg);   /* render: 1 = it has fn(arg); 0 = do it yourself */
-int plat_cpu2_wait(void);              /* render: 0 = done; -1 = it was given up and the job dropped: do it yourself */
+int plat_cpu2_wait(void);              /* render: 0 = done; -1 = it was given up and the job dropped: do it yourself
+                                        * (cpu2_fallback only) */
 void plat_cpu2_sync(void);             /* a barrier between the cores' reads and writes (a job's own sharing) */
 int plat_cpu2_busy(void);              /* 1 = the job handed over is not done yet (no waiting) */
 int plat_cpu2_gave_up(void);           /* why it is off: 0 no, 1 it misread a job, 2 one was late, 3 barred, 4 it

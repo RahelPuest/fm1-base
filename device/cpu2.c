@@ -20,8 +20,9 @@ int plat_cpu2_set(int on)
     if (fm1_cpu1_on)
         return 0;
     /* at power-on only, in app_init, before the audio and the timers (the start that works: Melodee's, X0X's; safe
-     * mode runs no app); not after a failed start: one core */
-    if (!cpu2_booting || bootguard.failed)
+     * mode runs no app). With the fallback (fm1.toml cpu2_fallback), not after a failed start: one core; without,
+     * always (a failure restarts, and two failed starts are safe mode) */
+    if (!cpu2_booting || (FM1_CPU1_FALLBACK && bootguard.failed))
         return -1;
     return fm1_cpu1_start();
 }

@@ -41,8 +41,10 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   backup = true              backup and restore of the app's saved objects over USB (FM1B_BACKUP: device/backup.c;
                              tools/fm1_backup.py); app.h gives APP_BACKUP_OBJS, _MAGIC, _VERSION and the app_backup_* hooks
   cpu2 = true                the second core (FM1B_CPU2: device/cpu2.c, plat_cpu2_* in plat.h, on felucca-bsp's
-                             chip/fm1_cpu1.*): a worker for a part of the render; FM1B_BUILD, a hash of the sources,
-                             lifts a bar an earlier build set (one core until power-off after it was given up)
+                             chip/fm1_cpu1.*): a worker for a part of the render. A failure of it (a misread, a
+                             fault, a late job) restarts the FM-1, the reason in the crash record (Melodee's releases)
+  cpu2_fallback = true       instead, one core after a failure, until power-off (FM1_CPU1_FALLBACK); FM1B_BUILD, a
+                             hash of the sources, lifts that bar for a new build
 Optional parts: only what an fm1.toml asks for is built in (Bluetooth, USB audio; an app's lib/touch by APP_TOUCH in
 app.h); the build prints what it has.
   ble = true                 Bluetooth MIDI (FM1B_BLE): ble/ on JieLi's BT libraries, from the AC79 SDK ($AC79_SDK);
@@ -455,7 +457,7 @@ def build_app():
     if VERSION:
         flags.append(f'-DAPP_VERSION="{VERSION}"')
     if CPU2:
-        flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u"]
+        flags += ["-DFM1_CPU1=1", f"-DFM1B_BUILD={build_id():#010x}u", f"-DFM1_CPU1_FALLBACK={int(bool(CONF.get('cpu2_fallback')))}"]
     o2 = [f if f != "-Os" else "-O2" for f in flags]
     ir = CONF.get("ir_pass")                      # the app's pass over the IR (see the top)
     ir_out = ["-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns"] if ir else []
