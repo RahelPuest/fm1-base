@@ -372,8 +372,11 @@ static void wifi_poll(void)
         wifi_join_due = 0;
         wifi_join(wf_nets.n[wifi_try].ssid, wf_nets.n[wifi_try].pass);
     } else if (wifi_join_due == 2) {
+        extern void shim_stacks_release(void);
         wifi_join_due = 0;
         wf_nets_front(wifi_ssid, wifi_pass);         /* joined: kept, the most recent first */
+        shim_stacks_release();                    /* and the last session's tasks, which ended after this one began,
+                                                   * their stacks back (~16 KB after a WiFi off and on) */
     }
     rx_second();
     if (wifi_st == WIFI_CONNECTED && wifi_is_on())
@@ -395,6 +398,10 @@ void plat_wifi_on(int on)
         wifi_why = "";
         wifi_rssi = 0;
         wifi_st = WIFI_STARTING;
+        {
+            extern void shim_stacks_release(void);
+            shim_stacks_release();                /* (the last session's ended tasks' stacks back: os.c) */
+        }
         radio_begin("WiFi: starting");
         if (first) {
             first = 0;

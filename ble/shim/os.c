@@ -59,6 +59,8 @@ static task_t tasks[NTASK];
  * stream ran it out with 13 stacks fixed in the pool) */
 static uint32_t *stk[NTASK - 1];
 static uint16_t stk_words[NTASK - 1];             /* each slot's stack, in words */
+static void *stk_mem[NTASK - 1];                  /* each one as malloc gave it (before the alignment) */
+void free(void *p);
 #define STACK(i) stk[(i) - 1]
 #define STACK_N(i) stk_words[(i) - 1]
 extern void *shim_heap_base(void);
@@ -80,12 +82,16 @@ static uint32_t stack_words_for(const char *name)
 static int stack_get(int i, const char *name)
 {
     uint32_t words = stack_words_for(name);
-    if (!STACK(i) || STACK_N(i) < words) {        /* (a smaller one is kept: it may still be pointed into) */
+    if (!STACK(i) || STACK_N(i) < words) {
         uint8_t *p = malloc(words * 4u + 8u);
         if (!p) {
             shim_log("task: no memory for a stack");
             return -1;
         }
+        free(stk_mem[i - 1]);                     /* a smaller one goes back: dropped, every WiFi restart lost ~15 KB
+                                                   * (fm1-radio: then AAC's 88 KB decoder no longer fit). No riskier
+                                                   * than reusing it, which writes over it all the same */
+        stk_mem[i - 1] = p;
         STACK(i) = (uint32_t *)(((uintptr_t)p + 7u) & ~(uintptr_t)7u);   /* 8-aligned */
         STACK_N(i) = (uint16_t)words;
     }
@@ -299,22 +305,46 @@ int shim_task_last(void) { return last_created; }
 static uint32_t killed_at[NTASK], kill_seq;
 void shim_timers_drop_owner(int owner);
 
-static int free_slot(void)
+#if SHIM_WIFI
+static uint32_t stack_words_for(const char *name);
+/* WiFi starting again: the stacks of the tasks that ended (the last session's, the library's and the app's) back to
+ * the heap, their slots clean. Kept, each restart's tasks took clean slots and new stacks while the old ones stayed
+ * with their killed slots: ~20 KB a restart until every slot had one (fm1-radio: then AAC's 88 KB decoder did not
+ * fit). The library starts from nothing after it, so nothing of it is left pointing into them. */
+void shim_stacks_release(void)
 {
-    int i, best = 0;
+    int i;
+    for (i = 1; i < NTASK; i++)
+        if (!tasks[i].used && STACK(i)) {
+            free(stk_mem[i - 1]);
+            stk_mem[i - 1] = 0;
+            STACK(i) = 0;
+            STACK_N(i) = 0;
+            killed_at[i] = 0;
+        }
+}
+#endif
+static int free_slot(const char *name)
+{
+    int i, best = 0, fit = 0;
+    (void)name;
     for (i = 1; i < NTASK; i++)
         if (!tasks[i].used) {
             if (!killed_at[i])
                 return i;
             if (!best || killed_at[i] < killed_at[best])
                 best = i;
+#if SHIM_WIFI                                     /* among the killed: the oldest whose stack is big enough already */
+            if (STACK(i) && STACK_N(i) >= stack_words_for(name) && (!fit || killed_at[i] < killed_at[fit]))
+                fit = i;
+#endif
         }
-    return best;
+    return fit ? fit : best;
 }
 
 int task_create(void (*fn)(void *), void *p, const char *name)
 {
-    int i = free_slot(), k;
+    int i = free_slot(name), k;
     if (i && stack_get(i, name) == 0) {
             task_t *t = &tasks[i];
             uint32_t *top = &STACK(i)[STACK_N(i)];
