@@ -211,6 +211,25 @@ uint32_t plat_xruns(void);
 #define PLAT_TICKS_PER_US 24u
 uint32_t plat_ticks24(void);
 
+/* The second core (fm1.toml cpu2 = true: FM1B_CPU2; felucca-bsp's chip/fm1_cpu1.h, Melodee's): a worker for a part of
+ * the render. Start it in app_init (the one time it may start: at power-on, before the audio and the timers); the
+ * render hands it a job, does its own share, then waits for it. One job at a time. On a unit whose second core misreads
+ * the RAM, or after a fault on it or a job not back in 8 ms, it is given up (held; the render does the work itself)
+ * and barred: one core at every start until power-off, or until a new build (FM1B_BUILD). After a failed start, one
+ * core. Host: a job runs at once, in order (an app with its own simulation defines APP_HOST_CPU2 and has them all). */
+int plat_cpu2_set(int on);             /* on 1, in app_init: 0 = it runs; -1 = one core (not now, barred, or it did not
+                                        * answer). On 0: held (from the main loop: no job outstanding) */
+int plat_cpu2_on(void);                /* it takes jobs */
+int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg);   /* render: 1 = it has fn(arg); 0 = do it yourself */
+int plat_cpu2_wait(void);              /* render: 0 = done; -1 = it was given up and the job dropped: do it yourself */
+void plat_cpu2_sync(void);             /* a barrier between the cores' reads and writes (a job's own sharing) */
+int plat_cpu2_busy(void);              /* 1 = the job handed over is not done yet (no waiting) */
+int plat_cpu2_gave_up(void);           /* why it is off: 0 no, 1 it misread a job, 2 one was late, 3 barred, 4 it
+                                        * faulted, 5 it did not answer at its start */
+uint32_t plat_cpu2_bad(void);          /* the jobs it misread */
+int plat_cpu2_barred(void);            /* 1: one core until power-off (given up, or the first core crashed beside it) */
+uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, in bytes */
+
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)
@@ -231,9 +250,10 @@ uint32_t plat_ticks24(void);
  *   APP_REDRAW      void app_redraw(void)        draw the whole screen again at the next frame (the mirror lost a part)
  *   APP_MIRROR_TEST int app_mirror_test(int on)  the mirror's remote asks for a test session (on 1, off 0): 1 done
  *   APP_CSTART      void app_cstart(void)         first thing at a start, before the RAM is cleared and with nothing
- *                   set up (registers only, no RAM): an app's second core that a reset left running, held
+ *                   set up (registers only, no RAM): an app's own second core that a reset left running, held
+ *                   (fm1-base's own, cpu2 = true, needs none of these)
  *   APP_FAULT       void app_fault(const fm1_crash_t *c)   a crash, before the crash screen (c: the record): an app's
- *                   second core given up; or the crash is on that core (c->sp on its stacks): it stops there
+ *                   own second core given up; or the crash is on that core (c->sp on its stacks): it stops there
  *
  * Screen mirroring (fm1.toml mirror = true: FM1B_MIRROR 1, device/mirror.c): the screen and the panel live on a
  * computer (base/web/mirror/, tools/fm1_mirror.py), and the panel played from it. Nothing for the app to call; an app

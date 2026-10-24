@@ -23,7 +23,8 @@
  *   APP_TOUCH               velocity and pressure from the keys (lib/touch.h)
  *   FM1B_BLE 0              Bluetooth MIDI (fm1.toml ble = true; tools/build.py --no-ble leaves it out)
  *   FM1B_MIRROR 0           the screen and panel mirrored over USB (fm1.toml mirror = true: mirror.c)
- *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c) */
+ *   FM1B_BACKUP 0           backup and restore of the app's objects over USB (fm1.toml backup = true: backup.c)
+ *   FM1B_CPU2 0             the second core (fm1.toml cpu2 = true: cpu2.c, felucca-bsp's fm1_cpu1.h) */
 #include <stdint.h>
 #include "plat.h"
 #include "app.h"                  /* first: the scan's hooks below may call the app */
@@ -97,6 +98,9 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #endif
 #ifndef FM1B_BACKUP
 #define FM1B_BACKUP 0
+#endif
+#ifndef FM1B_CPU2
+#define FM1B_CPU2 0
 #endif
 #define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
@@ -253,6 +257,9 @@ static void mirror_enc(int role, int32_t n) { (void)role, (void)n; }
 static void mirror_leds(uint32_t buttons, uint32_t keys) { (void)buttons, (void)keys; }
 #endif
 #include "plat_fm1.c"
+#if FM1B_CPU2
+#include "cpu2.c"                 /* the second core: plat_cpu2_* */
+#endif
 #if FM1B_BACKUP
 #include "backup.c"               /* backup and restore of the app's objects over USB (tools/fm1_backup.py) */
 static uint8_t backup_streaming(void) { return bu.on; }

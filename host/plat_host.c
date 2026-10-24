@@ -73,6 +73,9 @@
 #ifndef FM1B_BACKUP
 #define FM1B_BACKUP 0                           /* fm1.toml backup = true */
 #endif
+#ifndef FM1B_CPU2
+#define FM1B_CPU2 0                             /* fm1.toml cpu2 = true */
+#endif
 #ifdef __linux__
 #define _GNU_SOURCE                             /* (open_memstream: --serve) */
 #endif
@@ -559,6 +562,27 @@ uint32_t plat_ticks24(void)                     /* the host's monotonic clock, a
     return (uint32_t)t.tv_sec * (PLAT_TICKS_PER_US * 1000000u) + (uint32_t)t.tv_nsec / 1000u * PLAT_TICKS_PER_US +
            (uint32_t)t.tv_nsec % 1000u * PLAT_TICKS_PER_US / 1000u;
 }
+
+#if FM1B_CPU2 && !defined(APP_HOST_CPU2)
+/* the second core, simulated: a job runs at once, in order (the same sums as the device's split) */
+static int cpu2_on;
+int plat_cpu2_set(int on) { cpu2_on = on; return 0; }
+int plat_cpu2_on(void) { return cpu2_on; }
+int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg)
+{
+    if (!cpu2_on)
+        return 0;
+    fn(arg);
+    return 1;
+}
+int plat_cpu2_wait(void) { return 0; }
+void plat_cpu2_sync(void) {}
+int plat_cpu2_busy(void) { return 0; }
+int plat_cpu2_gave_up(void) { return 0; }
+uint32_t plat_cpu2_bad(void) { return 0; }
+int plat_cpu2_barred(void) { return 0; }
+uint32_t plat_cpu2_stack(void) { return 0; }
+#endif
 
 /* -------------------------------------------------------------- app --- */
 #define ANN_NAME APP_NAME " " APP_VERSION

@@ -788,7 +788,14 @@ static void fm1_main(void)
     fm1_adc_init();
     panel_init();
     led_pos_init();
+#if FM1B_CPU2
+    cpu2_boot();
+    cpu2_booting = 1;                               /* (plat_cpu2_set: the second core starts in app_init or never) */
+#endif
     app_init();                                     /* the app's engine and its saved state (or defaults) */
+#if FM1B_CPU2
+    cpu2_booting = 0;
+#endif
     audio_init();
     usb_start();
 #if FM1B_TRS
@@ -890,6 +897,10 @@ static void fm1_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d, p3, src, wdt;
+#if FM1B_CPU2
+    fm1_cpu1_stop();                                /* a second core that a reset left running would read the RAM
+                                                     * cleared below: held (registers only) */
+#endif
 #ifdef APP_CSTART
     app_cstart();                                   /* the app's, before the RAM is cleared (registers only: a second
                                                      * core a reset left running, held) */
