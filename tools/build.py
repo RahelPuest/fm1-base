@@ -36,7 +36,7 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
   ble_trim = true            Bluetooth as a MIDI peripheral only: JieLi's central, classic and test code cut (flash and
                              RAM: Melodee's measure ~18 KB and ~4 KB); not with ble_central
-  ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash)
+  ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash; iOS and macOS connect)
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
@@ -363,7 +363,8 @@ BLE_CONFIG = {"apps/common/config/log_config/lib_btctrler_config.c": [
     (r"(const int config_btctler_dual_a2dp\s*=\s*)1", r"\g<1>0"),
     (r"(const int config_btctler_le_master_multilink\s*=\s*)1", r"\g<1>0"),
     (r"(const int config_multilink_support_esco_enalbe\s*=\s*)1", r"\g<1>0")]}
-# ble_no_pairing = true (with ble_trim): no pairing or encryption either (the security manager)
+# ble_no_pairing = true (with ble_trim): no pairing or encryption either (the security manager). Bluetooth MIDI needs
+# neither: an iPhone and a Mac connect, MIDI both ways (LOOM-8, 2026-10-25)
 BLE_CONFIG_NO_SM = {"apps/common/config/log_config/lib_btctrler_config.c": [
     (r"(const int config_le_sm_support_enable\s*=\s*)1", r"\g<1>0"),
     (r"(const uint64_t config_btctler_le_features\s*=\s*)\(LE_ENCRYPTION\)", r"\g<1>(0)")]}
