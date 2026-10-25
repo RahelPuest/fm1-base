@@ -206,6 +206,20 @@ static void hexs(char *b, uint32_t v)
         b[i] = "0123456789ABCDEF"[(v >> (28u - 4u * i)) & 15u];
     b[8] = 0;
 }
+#if FM1B_BLE
+static char *log_dec(char *b, uint32_t v)            /* v in decimal at b; the end */
+{
+    char t[10];
+    int n = 0;
+    do {
+        t[n++] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v);
+    while (n)
+        *b++ = t[--n];
+    return b;
+}
+#endif
 
 /* a readout for development over USB-MIDI: F0 7D 4C 47 F7 ("LG") asks; the answer is one frame per line,
  * F0 7D 4C 47 <ASCII> F7: the last crash (count, vector, pc, rets, sp, uptime), the supplies' registers (rails), the
@@ -411,6 +425,27 @@ static int log_frame(const uint8_t *p, uint32_t n)
         hexs(q, shim_off_from);
         log_line_send(b);
         shim_off_max = 0;
+    }
+    {   /* the radio's tasks' deepest stacks and its heap's most, now (the "stacks" lines may have scrolled away) */
+        extern int shim_stack_depth(int task);
+        extern uint32_t shim_heap_peak;
+        extern const uint32_t shim_heap_size;
+        int k;
+        const char *l = "BT stacks ";
+        q = b;
+        while (*l)
+            *q++ = *l++;
+        for (k = 1; k <= 3; k++) {
+            q = log_dec(q, (uint32_t)shim_stack_depth(k) * 256u);
+            *q++ = ' ';
+        }
+        for (l = "heap "; *l;)
+            *q++ = *l++;
+        q = log_dec(q, shim_heap_peak);
+        *q++ = '/';
+        q = log_dec(q, shim_heap_size);
+        *q = 0;
+        log_line_send(b);
     }
 #endif
     log_line_send("end");
