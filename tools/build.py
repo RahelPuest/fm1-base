@@ -859,7 +859,8 @@ def build_app():
     for u in CONF.get("o2", []):
         for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u]):
             o = OUT / "o2" / ("_".join(f.relative_to(APP).with_suffix("").parts) + ".o")
-            units.append(("cc", *o2, *o2_more, *inc(f.parent), *ir_out, "-c", f, "-o", o.with_suffix(".ll") if ir else o))
+            units.append(("cc", *cxx(f, [*o2, *o2_more]), *inc(f.parent), *ir_out, "-c", f, "-o",
+                          o.with_suffix(".ll") if ir else o))
             objs.append(o)
             o2_units.append((f, o))
     jieli = (BLE and not OWN) or WIFI             # JieLi's libraries linked (the shim, LTO)
@@ -1222,6 +1223,18 @@ def mmio_check():
     return errors
 
 
+# an o2 unit in C++ (.cc, .cpp): no exceptions, no RTTI, no C++ library (the toolchain has none: an app brings
+# the few headers it needs)
+CXX_FLAGS = ["-x", "c++", "-std=gnu++11", "-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics", "-nostdinc++"]
+
+
+def cxx(f, flags):
+    """the flags for unit f: C++ ones for a .cc / .cpp file (its C -std dropped)"""
+    if f.suffix in (".cc", ".cpp"):
+        return [*[a for a in flags if not a.startswith("-std=")], *CXX_FLAGS]
+    return list(flags)
+
+
 def o2_files():
     """the o2 units, their globs expanded"""
     return [f for u in CONF.get("o2", []) for f in (sorted(APP.glob(u)) if any(ch in u for ch in "*?[") else [APP / u])]
@@ -1236,7 +1249,7 @@ def o2_objects(cc, base_flags, out):
 
     def one(job):
         f, o = job
-        r = subprocess.run([cc, *base_flags, *extra, f"-I{f.parent}", "-c", str(f), "-o", str(o)],
+        r = subprocess.run([cc, *cxx(f, [*base_flags, *extra]), f"-I{f.parent}", "-c", str(f), "-o", str(o)],
                            capture_output=True, text=True)
         return r.stderr if r.returncode else ""
     with ThreadPoolExecutor(8) as ex:
