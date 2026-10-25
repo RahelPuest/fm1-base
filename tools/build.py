@@ -34,6 +34,9 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
                              logs each one's deepest, "stacks", 10 s after Bluetooth is ready and as they grow)
   ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
+  ble_trim = true            Bluetooth as a MIDI peripheral only: JieLi's central, classic and test code cut (flash and
+                             RAM: Melodee's measure ~18 KB and ~4 KB); not with ble_central
+  ble_no_pairing = true      with ble_trim: no pairing or encryption either (~19 KB more flash)
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
@@ -328,6 +331,93 @@ BLE_INC = ["include_lib", "include_lib/driver", "include_lib/driver/device", "in
            "include_lib/utils/event", "include_lib/media", "include_lib/media/cpu/wl82", "apps",
            "apps/demo/demo_ble/include", "apps/common", "apps/common/include", "apps/common/config/include",
            "include_lib/btstack", "include_lib/net", "apps/common/ble/include", "include_lib/newlib/include"]
+# ble_trim = true: what Bluetooth MIDI as a peripheral never runs, cut from JieLi's libraries (after Melodee's
+# ble-spike). They are LLVM 4.0 bitcode linked with LTO, so a function's body replaced (the toolchain's llvm-link
+# -override) lets the optimizer drop everything only it reached ({(library, member): the replacements' C source}); and
+# the SDK's library configuration (compiled here as LTO bitcode: its constants fold into JieLi's code) cut to LE only,
+# one link as a peripheral. Not with ble_central: a central needs the scan, connecting and the GATT client
+BLE_TRIM = {
+    ("btctrler.a", "bredr_link.c.o"): "int link_conn_tx_bulk_avaiable(void) { return 0; }",     # classic's ACL transmit
+    ("btstack.a", "ancs_client.c.o"): "void ancs_client_btstack_init_for_check(void) {}",       # Apple's notifications
+    ("btctrler.a", "ll_scan.c.o"): "int ll_scan_open(void) { return -1; }",                     # the central's scan
+    ("btctrler.a", "link_layer.c.o"): "int ll_create_conn_link(void) { return -1; }",           # and its connecting
+    ("btstack.a", "gatt_client.c.o"):                                       # the GATT client's reads and writes (the
+        "int gatt_client_read_value_of_characteristic_using_value_handle(void) { return 1; }\n"   # server's
+        "int gatt_client_read_long_value_of_characteristic_using_value_handle(void) { return 1; }\n"  # notifications
+        "int gatt_client_write_value_of_characteristic_extend(void) { return 1; }\n"               # stay)
+        "int gatt_client_write_value_of_characteristic_without_response(void) { return 1; }\n"
+        "int gatt_client_discover_characteristic_descriptors_by_handle(void) { return 1; }",
+}
+# (not avctp_user.c.o's classic connection bookkeeping, as Melodee's spike has it: stubbed, the controller never says
+# it is ready on an FM-1: "still starting after 3 s", 15 s and no Bluetooth; found by bisecting the stubs, 2026-10-25)
+BLE_CONFIG = {"apps/common/config/log_config/lib_btctrler_config.c": [
+    (r"(const int config_btctler_le_roles\s*=\s*)\([^)]*\)", r"\1(LE_ADV | LE_SLAVE)"),
+    (r"(const int config_le_gatt_client_num\s*=\s*)[^;]+", r"\g<1>0"),
+    (r"(const int CONFIG_TEST_DUT_CODE\s*=\s*)1", r"\g<1>0"),
+    (r"(const int CONFIG_TEST_FCC_CODE\s*=\s*)1", r"\g<1>0"),
+    (r"(const int CONFIG_LMP_NAME_REQ_ENABLE\s*=\s*)1", r"\g<1>0"),
+    (r"(const int CONFIG_LMP_PASSKEY_ENABLE\s*=\s*)1", r"\g<1>0"),
+    (r"(const int CONFIG_LMP_MASTER_ESCO_ENABLE\s*=\s*)1", r"\g<1>0"),
+    (r"(const int CONFIG_BREDR_INQUIRY\s*=\s*)1", r"\g<1>0"),
+    (r"(const int config_btctler_dual_a2dp\s*=\s*)1", r"\g<1>0"),
+    (r"(const int config_btctler_le_master_multilink\s*=\s*)1", r"\g<1>0"),
+    (r"(const int config_multilink_support_esco_enalbe\s*=\s*)1", r"\g<1>0")]}
+# ble_no_pairing = true (with ble_trim): no pairing or encryption either (the security manager)
+BLE_CONFIG_NO_SM = {"apps/common/config/log_config/lib_btctrler_config.c": [
+    (r"(const int config_le_sm_support_enable\s*=\s*)1", r"\g<1>0"),
+    (r"(const uint64_t config_btctler_le_features\s*=\s*)\(LE_ENCRYPTION\)", r"\g<1>(0)")]}
+
+
+def ble_config(sdk, dst):
+    """the SDK's configuration sources into dst, as BLE_CONFIG cuts them (ble_trim); written only when changed"""
+    import re as _re
+    import shutil
+    cuts = {}
+    if BLE and CONF.get("ble_trim"):
+        for d in (BLE_CONFIG, BLE_CONFIG_NO_SM if CONF.get("ble_no_pairing") else {}):
+            for f, rs in d.items():
+                cuts.setdefault(f, []).extend(rs)
+    for f in BLE_SDK_SRC:
+        text = (sdk / f).read_text(errors="ignore")
+        for rx, rep in cuts.get(f, []):
+            text, n = _re.subn(rx, rep, text)
+            if not n:
+                raise SystemExit(f"build: {f} in the SDK has changed: no {rx!r}")
+        if not (dst / f).exists() or (dst / f).read_text(errors="ignore") != text:
+            (dst / f).parent.mkdir(parents=True, exist_ok=True)
+            (dst / f).write_text(text)
+
+
+def ble_trim(dst):
+    """OUT/ble/trim/LIB: the libraries with BLE_TRIM's functions replaced (cached by their stubs); {LIB: path}"""
+    import shutil
+    trim = OUT / "ble" / "trim"
+    pick = os.environ.get("FM1B_STUBS")           # (a bisection: only these members' stubs, e.g. "ll_scan,gatt_client")
+    items = {k: v for k, v in BLE_TRIM.items() if not pick or k[1].replace(".c.o", "") in pick.split(",")}
+    key = repr(sorted(items.items()))
+    libs = {lib: trim / lib for lib, _ in items}
+    if (trim / "key").exists() and (trim / "key").read_text() == key:
+        return libs
+    if trim.exists():
+        shutil.rmtree(trim)
+    trim.mkdir(parents=True)
+    for (lib, member), src in items.items():
+        if not (trim / lib).exists():
+            shutil.copy(dst / "lib" / lib, trim / lib)
+        w = trim / member.replace(".c.o", "")
+        w.mkdir()
+        (w / "stub.c").write_text(src + "\n")
+        tc("common/bin/llvm-ar", "x", trim / lib, member)         # (into ROOT, the tools' cwd: moved below)
+        shutil.move(ROOT / member, w / member)
+        tc("cc", "-mcpu=r3", "-mfprev1", "-Oz", "-flto", "-c", w / "stub.c", "-o", w / "stub.bc")
+        tc("common/bin/llvm-link", w / member, f"-override={(w / 'stub.bc').resolve().relative_to(ROOT)}",
+           "-o", w / "out.bc")
+        shutil.copy(w / "out.bc", w / member)
+        tc("common/bin/llvm-ar", "r", trim / lib, w / member)
+    (trim / "key").write_text(key)
+    return libs
+
+
 # WiFi: the SDK's no-SDRAM builds (demo_audio) link the _sfc variants: smaller buffers, code from flash (fm1-radio's)
 WIFI_LIBS = ["wl_wifi_sta_sfc.a", "wpasupplicant.a", "hsm.a"]
 RADIO_LIBS = ["crypto_toolbox_Osize.a", "lib_ccm_aes.a", "wl_rf_common.a"]   # (either radio's)
@@ -363,14 +453,12 @@ def radio_units():
             shutil.copytree(sdk / d, dst / d, dirs_exist_ok=True,
                             ignore=lambda dd, names: [n for n in names if (Path(dd) / n).is_file()
                                                       and not n.endswith((".h", ".hpp"))])
-        for f in BLE_SDK_SRC:
-            (dst / f).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(sdk / f, dst / f)
         (dst / "lib").mkdir(exist_ok=True)
         for f in BLE_LIBS:
             shutil.copy(sdk / "cpu/wl82/liba" / f, dst / "lib" / f)
         shutil.copy(sdk / "include_lib/newlib/pi32v2-lib/libcompiler_rt.a", dst / "lib")
         (dst / ".copied").write_text("")
+    ble_config(sdk, dst)
     if WIFI and not (dst / ".copied_wifi").exists():
         for d in LWIP_DIRS:                       # lwIP's sources
             for c in (sdk / "lib/net/lwip_2_1_3" / d).glob("*.c"):
@@ -435,7 +523,11 @@ def radio_units():
                               "-o", o / name))
                 objs.append(o / name)
     linked = (BLE_LIBS if BLE else RADIO_LIBS) + WIFI_LIBS * WIFI
-    libs = ["--start-group", *[dst / "lib" / f for f in linked], dst / "lib" / "libcompiler_rt.a", "--end-group"]
+    if BLE and CONF.get("ble_trim") and CONF.get("ble_central"):
+        raise SystemExit("build: ble_trim cuts the central's scan, connecting and GATT client: not with ble_central")
+    trimmed = ble_trim(dst) if BLE and CONF.get("ble_trim") else {}
+    libs = ["--start-group", *[trimmed.get(f, dst / "lib" / f) for f in linked], dst / "lib" / "libcompiler_rt.a",
+            "--end-group"]
     return units, objs, libs
 
 
