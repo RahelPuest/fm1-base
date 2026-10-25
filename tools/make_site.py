@@ -140,7 +140,11 @@ def main(app, pkg, version, out):
     for key, val in (("NAME", conf["name"]), ("REPO", repo), ("REPO_SHORT", re.sub(r"^https?://", "", repo)),
                      ("LICENSE", conf.get("licence", "MPL-2.0")), ("CREDITS", " " + credits if credits else "")):
         html = html.replace("{{" + key + "}}", val)
-    (out / "install" / "index.html").write_text(html.replace("/*LIB*/", lib).replace("/*META*/", meta), encoding="utf-8")
+    # the firmware's own steps around an install (fm1.toml install_app = "web/install_app.js": an expression, an
+    # object with before / after; web/installer.html APP), or none
+    app_js = (app / conf["install_app"]).read_text(encoding="utf-8") if conf.get("install_app") else "null"
+    (out / "install" / "index.html").write_text(html.replace("/*LIB*/", lib).replace("/*META*/", meta)
+                                                .replace("/*APP*/", app_js), encoding="utf-8")
     # the front page and the manual (complete pages, their images beside them)
     landing = app / "site" / "landing.md"
     if not landing.exists():

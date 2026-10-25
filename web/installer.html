@@ -97,6 +97,13 @@
   <textarea id="report" readonly hidden rows="14"></textarea>
   <p><a href="../" data-t="manual">Back to {{NAME}}</a></p>
 </main>
+<dialog id="appask" aria-labelledby="appaskh">
+  <form method="dialog">
+    <h2 id="appaskh"></h2>
+    <div id="appaskt"></div>
+    <div class="row" id="appaskrow"></div>
+  </form>
+</dialog>
 <dialog id="confirm" aria-labelledby="confirmh">
   <form method="dialog">
     <h2 id="confirmh" data-t="confirmh"></h2>
@@ -260,6 +267,30 @@ const log = (t) => {
 };
 let image = null, boot = null;
 const meta = /*META*/;
+/* the firmware's own steps around an install (its site's install_app script, or none): before(midi, ui) runs before
+   anything is written, may ask (ui.ask) and returns its state, or false to stop there; after(midi, ui, state) once
+   the new firmware has started (it waits for it itself). A failure in after is said, the install stays done */
+const APP = /*APP*/;
+const appUi = {
+  say: (txt) => say(txt), log: (txt) => log(txt),
+  progress: (pct) => { $("bar").value = Math.max(0, Math.min(100, pct)); },
+  /* a question: html for its body, choices [[value, label], ...] (the first the default); the value chosen */
+  ask: (title, body, choices) => new Promise((resolve) => {
+    const d = $("appask");
+    $("appaskh").textContent = title;
+    $("appaskt").innerHTML = body;
+    $("appaskrow").textContent = "";
+    choices.forEach(([value, label], i) => {
+      const b = document.createElement("button");
+      b.type = "submit"; b.value = value; b.textContent = label;
+      if (i) b.className = "plain";
+      $("appaskrow").prepend(b);
+    });
+    d.returnValue = "";
+    d.showModal();
+    d.addEventListener("close", () => resolve(d.returnValue || choices[choices.length - 1][0]), { once: true });
+  }),
+};
 
 /* the backup: a requirement before every install; the link where the site has the backup page */
 document.querySelectorAll(".baklink").forEach((a) => { a.hidden = !meta.backup; });
@@ -328,8 +359,15 @@ async function run(img, product, isStock, sha256) {
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
   catch (e) { sayK("denied"); return; }
+  let appState = null;
+  if (APP && APP.before && !isStock) {
+    try { appState = await APP.before(midi, appUi); }
+    catch (e) { say(String(e && e.message || e)); return; }
+    if (appState === false) return;
+  }
   writing = true;
   $("go").disabled = $("stockgo").disabled = true;
+  let installed = false;
   try {
     const up = new Updater(midi, log);
     /* progress: the bytes the device reads, against what it reads for this package (the size of the package,
@@ -360,15 +398,21 @@ async function run(img, product, isStock, sha256) {
         if (done) $("bar").value = 100;
         sayK(done ? (isStock ? "stockdone" : "done") : "stopped");
       }
+      installed = !!done;
     } else {
       await up.install(img, product, step, sha256);
       if (withBoot) await up.installBoot(boot, product, step);
+      installed = true;
     }
   } catch (e) {
     if (isStock && e && e.code === "mismatch") { $("bar").value = 100; sayK("stockdone"); }   /* stock names itself its own way */
     else if (e && e.code && TEXT[lang][e.code]) sayK(e.code, e.detail || "");
     else sayK("error", e && e.message);
     log(String(e && e.stack || e));
+  }
+  if (installed && APP && APP.after && !isStock) {
+    try { await APP.after(midi, appUi, appState); }
+    catch (e) { say(String(e && e.message || e)); log(String(e && e.stack || e)); }
   }
   writing = false;
   $("go").disabled = !image;
