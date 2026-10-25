@@ -447,6 +447,34 @@ static int log_frame(const uint8_t *p, uint32_t n)
         *q = 0;
         log_line_send(b);
     }
+    {   /* the clock by Bluetooth since the last read: ticks, the sender's gaps between them (ms), how many of
+         * those 0 (a packet's one time for all), the most late one, and the lateness allowed now */
+        extern uint32_t bj_gap_min, bj_gap_max, bj_gap_zero, bj_ticks, bj_rel_max;
+        extern uint32_t ble_jitter_late(void);
+        const char *l;
+        q = b;
+        for (l = "BT clk "; *l;)
+            *q++ = *l++;
+        q = log_dec(q, bj_ticks);
+        for (l = " gap "; *l;)
+            *q++ = *l++;
+        q = log_dec(q, bj_ticks > 1u ? bj_gap_min : 0u);
+        *q++ = '.';
+        *q++ = '.';
+        q = log_dec(q, bj_gap_max);
+        for (l = " z "; *l;)
+            *q++ = *l++;
+        q = log_dec(q, bj_gap_zero);
+        for (l = " late "; *l;)
+            *q++ = *l++;
+        q = log_dec(q, bj_rel_max);
+        *q++ = '/';
+        q = log_dec(q, ble_jitter_late());
+        *q = 0;
+        log_line_send(b);
+        bj_gap_min = 0xFFFFu;
+        bj_gap_max = bj_gap_zero = bj_ticks = bj_rel_max = 0;
+    }
 #endif
     log_line_send("end");
     return 1;

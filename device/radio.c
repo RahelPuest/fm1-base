@@ -399,9 +399,80 @@ static uint8_t ble_conn;                          /* bit l: ble_midi_connected(l
 #define BQ 64u
 static uint32_t ble_in_q[BQ];
 static uint32_t bi_w, bi_r;
-void ble_midi_receive(uint32_t pkt)               /* from the stack (in ble_poll): for plat_midi_in. The device's
+/* The transport (clock, start, continue, stop) by the sender's time: the radio bunches messages into its
+ * connection events (7.5..30 ms apart), so ticks would come in clumps and a sequencer stepping on them would clump
+ * too (LOOM-8 on a Mac's clock: its sixteenths 60..180 ms apart at 140 BPM, against 104..112 over USB). Each BLE
+ * MIDI message carries the millisecond it was sent (13 bits); the quickest one seen gives the two clocks' offset
+ * (a message can only be late), and each is let out at its sent time plus the lateness the link has lately had
+ * (at most BJ_MAX): spaced as sent, a constant delay later. The rest (notes, CCs ...) comes at once */
+#define BTQ 32u                                  /* (120 ms of ticks at 300 BPM: 15) */
+#define BJ_MAX 120u                              /* a DAW schedules its clock ahead (Logic, Live: ~100 ms) and macOS
+                                                  * sends each tick at once with its future time: they come up to
+                                                  * that much early; held to their times, the steps are as even as
+                                                  * over USB, a constant ~0.1 s later (a DAW's clock delay setting) */
+static struct { uint32_t pkt, due; } ble_tq[BTQ];
+static volatile uint32_t bt_w, bt_r;
+static uint32_t bj_base, bj_late, bj_t, bj_creep, bj_decay;
+static uint8_t bj_have, bj_ts_seen;
+uint32_t bj_ts_prev, bj_gap_min = 0xFFFFu, bj_gap_max, bj_gap_zero, bj_ticks, bj_rel_max;   /* (the log readout) */
+uint32_t ble_jitter_late(void) { return bj_late; }
+static void ble_transport(uint32_t pkt, uint32_t ts)
+{
+    uint32_t now = shim_ms(), diff = (now - ts) & 8191u, rel;
+    if (!bj_have || now - bj_t > 2000u) {         /* the first, or after a pause: the offset afresh */
+        bj_base = diff;
+        bj_late = 0;
+        bj_creep = bj_decay = now;
+        bj_have = 1;
+    }
+    if ((pkt >> 8 & 0xFFu) == 0xF8u) {           /* (the log: the clock's sender gaps and lateness, since read) */
+        uint32_t g = (ts - bj_ts_prev) & 8191u;
+        if (bj_ts_seen && g < 1000u) {
+            if (g < bj_gap_min) bj_gap_min = g;
+            if (g > bj_gap_max) bj_gap_max = g;
+            if (g == 0u) bj_gap_zero++;
+        }
+        bj_ts_prev = ts;
+        bj_ts_seen = 1;
+        bj_ticks++;
+    }
+    bj_t = now;
+    if (now - bj_creep >= 1000u) {                /* (the two crystals drift: the offset may grow; a quicker one
+                                                   * sets it back at once) */
+        bj_base = (bj_base + 1u) & 8191u;
+        bj_creep = now;
+    }
+    rel = (diff - bj_base) & 8191u;
+    if (rel >= 4096u) {                           /* quicker than any yet: the offset */
+        bj_base = diff;
+        rel = 0;
+    }
+    if (rel > bj_rel_max)
+        bj_rel_max = rel;
+    if (rel > BJ_MAX)
+        rel = BJ_MAX;
+    if (rel > bj_late)
+        bj_late = rel;
+    else if (now - bj_decay >= 1000u && bj_late) {   /* (the lateness allowed shrinks again, a ms a second) */
+        bj_late--;
+        bj_decay = now;
+    }
+    if (bt_w - bt_r < BTQ) {
+        ble_tq[bt_w % BTQ].pkt = pkt & ~0xE0u;
+        ble_tq[bt_w % BTQ].due = now + (bj_late - rel);
+        __asm__ volatile("" ::: "memory");
+        bt_w++;
+        ble_rx_count++;
+    }
+}
+void ble_midi_receive(uint32_t pkt, uint32_t ts)  /* from the stack (in ble_poll): for plat_midi_in. The device's
                                                    * packets carry cable 1, which tells them from the computer's */
 {
+    uint32_t st = pkt >> 8 & 0xFFu;
+    if (st == 0xF8u || st == 0xFAu || st == 0xFBu || st == 0xFCu) {
+        ble_transport(pkt, ts);
+        return;
+    }
     if (bi_w - bi_r < BQ) {
         ble_in_q[bi_w % BQ] = pkt & ~0xE0u;
         bi_w++;
@@ -411,10 +482,15 @@ void ble_midi_receive(uint32_t pkt)               /* from the stack (in ble_poll
 static int ble_midi_in(uint32_t *pkt, uint32_t *from)   /* from: its link's out, TO_BLE_HOST or TO_BLE_DEV */
 {
     uint32_t p;
-    if (bi_r == bi_w)
+    if (bt_r != bt_w && (int32_t)(shim_ms() - ble_tq[bt_r % BTQ].due) >= 0) {   /* the transport, when due */
+        p = ble_tq[bt_r % BTQ].pkt;
+        bt_r++;
+    } else if (bi_r == bi_w)
         return 0;
-    p = ble_in_q[bi_r % BQ];
-    bi_r++;
+    else {
+        p = ble_in_q[bi_r % BQ];
+        bi_r++;
+    }
     *from = (p >> 4 & 0xFu) == 1u ? TO_BLE_DEV : TO_BLE_HOST;
     *pkt = p & ~0xF0u;
     return 1;

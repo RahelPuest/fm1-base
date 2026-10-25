@@ -14,7 +14,8 @@
  *   ble_midi_send_many(link, pkts, ms, n)   USB-MIDI packets (cin | status << 8 | d1 << 16 | d2 << 24), each
  *                                 with the millisecond it happened, to link 0, the central, as many as fit one
  *                                 notification; returns how many went; from the main loop (the stack's context)
- *   ble_midi_receive(pkt)         the firmware's: every MIDI message written by the central
+ *   ble_midi_receive(pkt, ts)     the firmware's: every MIDI message written by the central, with the
+ *                                 sender's millisecond it happened (13 bits: BLE MIDI's timestamp)
  *   ble_midi_connected(link)      link 0: a central is connected and listens (CCC on); link 1 (BLE_MIDI_CENTRAL):
  *                                 the MIDI device we connected to is ready
  *
@@ -46,7 +47,7 @@ const char log_tag_const_i_BLE_MIDI = 1;           /* the SDK keeps these in log
 #ifndef BLE_MIDI_CENTRAL
 #define BLE_MIDI_CENTRAL 0
 #endif
-extern void ble_midi_receive(uint32_t pkt);
+extern void ble_midi_receive(uint32_t pkt, uint32_t ts);   /* ts: the sender's millisecond (13 bits) */
 extern uint32_t shim_ms(void);
 
 /* ---- the GATT database (the SDK's binary form: size, flags, handle, uuid, value). Flags: bit 1 read,
@@ -161,9 +162,16 @@ static u8 cin_of(u8 st, int n)
 static void midi_parse(const u8 *b, u16 len, u32 cable)   /* cable: 0 the central's, 0x10 the device's */
 {
     u16 i = 1;
-    u8 st = 0;
+    u8 st = 0, hi = b[0] & 0x3F, lo = 0, seen = 0;  /* the time: the header's high six bits, each message's low seven */
+    u32 ts = 0;
     while (i < len) {
         if (b[i] & 0x80) {                       /* a timestamp low byte, then maybe a status */
+            u8 l = b[i] & 0x7F;
+            if (seen && l < lo)                  /* (lower than the one before: the next 128 ms) */
+                hi = (u8)((hi + 1u) & 0x3Fu);
+            lo = l;
+            seen = 1;
+            ts = (u32)hi << 7 | lo;
             i++;
             if (i < len && (b[i] & 0x80))
                 st = b[i++];
@@ -179,7 +187,7 @@ static void midi_parse(const u8 *b, u16 len, u32 cable)   /* cable: 0 the centra
                 continue;
             }
             if (st >= 0xF8) {
-                ble_midi_receive(cable | 0xFu | (uint32_t)st << 8);
+                ble_midi_receive(cable | 0xFu | (uint32_t)st << 8, ts);
                 continue;
             }
             for (k = 0; k < n; k++) {
@@ -188,7 +196,7 @@ static void midi_parse(const u8 *b, u16 len, u32 cable)   /* cable: 0 the centra
                 d[k] = b[i++];
             }
             ble_midi_receive(cable | (uint32_t)cin_of(st, n) | (uint32_t)st << 8 | (uint32_t)d[0] << 16 |
-                             (uint32_t)d[1] << 24);
+                             (uint32_t)d[1] << 24, ts);
         }
     }
 }
