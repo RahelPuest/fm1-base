@@ -533,9 +533,10 @@ void shim_bt_event(int from, const void *event, int len)
         shim_log("BT ready: advertising as FM-1");
         {
             extern uint32_t shim_heap_peak;
+            extern const uint32_t shim_heap_size;
             char b[32] = "heap peak ", *q = put_dec(b + 10, shim_heap_peak);
             q[0] = ' '; q[1] = 'o'; q[2] = 'f'; q[3] = ' ';
-            put_dec(q + 4, 24u * 1024u);
+            put_dec(q + 4, shim_heap_size);
             shim_log(b);
         }
         bt_ble_init();
@@ -591,26 +592,31 @@ static void ble_poll(void)
     {   /* ten seconds after it is ready: the tasks' deepest stack so far (sizing; 8 KiB each), then again each
          * time one goes deeper (a second at most between looks) */
         static uint8_t said, deep[4];
-        static uint32_t looked;
+        static uint32_t looked, heap_said;
         extern int shim_stack_depth(int task);
+        extern uint32_t shim_heap_peak;
         int k, more = 0;
         if (ble_state == BLE_READY && said && shim_ms() - looked > 1000u) {
             looked = shim_ms();
             for (k = 1; k <= 3; k++)
                 if (shim_stack_depth(k) > deep[k])
                     more = 1;
+            if (shim_heap_peak > heap_said)
+                more = 1;
         }
         if (ble_state == BLE_READY && (more || (!said && shim_ms() - radio_t0 > 10000u))) {
-            char b[40] = "stacks ", *q = b + 7;
+            char b[56] = "stacks ", *q = b + 7;
             said = 1;
             looked = shim_ms();
             for (k = 1; k <= 3; k++)
                 deep[k] = (uint8_t)shim_stack_depth(k);
             for (k = 1; k <= 3; k++) {
                 q = put_dec(q, (uint32_t)deep[k] * 256u);
-                *q++ = k < 3 ? ' ' : 0;
+                *q++ = ' ';
             }
-            q[-1] = 0;
+            heap_said = shim_heap_peak;               /* (and the heap's most ever: its sizing) */
+            q[0] = 'h'; q[1] = 'e'; q[2] = 'a'; q[3] = 'p'; q[4] = ' ';
+            put_dec(q + 5, heap_said);
             shim_log(b);
         }
     }

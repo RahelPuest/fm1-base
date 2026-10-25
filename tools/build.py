@@ -32,7 +32,8 @@ APP_DIR holds the app (app.h, app.c, its sources) and its fm1.toml:
   words = "words.tsv"        the screen reader's words (fm1-reader), relative to APP_DIR
   font_full = ["L"]          font roles with lower case too (by default M and L have capitals and digits only)
   ble_stack_kb = 6           the Bluetooth tasks' stacks, KB each (default 8: three of them, in the pool; radio.c
-                             logs each one's deepest, "stacks", 10 s after Bluetooth is ready)
+                             logs each one's deepest, "stacks", 10 s after Bluetooth is ready and as they grow)
+  ble_heap_kb = 16           its heap, KB (default 24, in RAM; the same log line's "heap": its most ever)
   ble_central = true         and the FM-1 connects to Bluetooth MIDI devices too (FM1B_BLE_CENTRAL), beside a computer
   usb_audio_in = true        the FM-1 recordable over USB (FM1B_UAC; the default: true)
   usb_audio_out = true       a computer plays through the FM-1 over USB (FM1B_UAC_OUT; the default: true)
@@ -384,6 +385,8 @@ def radio_units():
         flags += ["-DSHIM_WIFI=1"]
     if CONF.get("ble_stack_kb"):                  # the Bluetooth tasks' stacks, KB each (default 8)
         flags.append(f"-DSHIM_STACK_WORDS={int(CONF['ble_stack_kb']) * 256}")
+    if CONF.get("ble_heap_kb") and not WIFI:      # its heap, KB (default 24, in RAM)
+        flags.append(f"-DSHIM_BLE_HEAP_KB={int(CONF['ble_heap_kb'])}u")
     o = OUT / "ble" / "o"
     o.mkdir(parents=True, exist_ok=True)
     units = [("cc", "-c", SRC / "ble" / "shim" / "ctx.S", "-o", o / "ctx.o")]
