@@ -34,7 +34,11 @@ void *malloc(size_t n);
 #else
 #define QLEN 512                      /* ints per task queue (BT posts bursts) */
 #endif
-#define STACK_WORDS 2048              /* 8 KiB per task, in the pool: an interrupt (the audio render) nests on top */
+#ifndef SHIM_STACK_WORDS
+#define SHIM_STACK_WORDS 2048         /* fm1.toml ble_stack_kb: an app short of pool may ask for less (radio.c logs
+                                       * each task's deepest, "stacks", 10 s after Bluetooth is ready) */
+#endif
+#define STACK_WORDS SHIM_STACK_WORDS  /* 8 KiB per task, in the pool: an interrupt (the audio render) nests on top */
 
 enum { W_NONE, W_TASKQ, W_SEM, W_MUTEX, W_TIME };
 typedef struct {

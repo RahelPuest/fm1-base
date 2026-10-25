@@ -588,15 +588,26 @@ static void ble_poll(void)
 #endif
     radio_stuck_check();
     radio_settle(ble_state == BLE_READY);
-    {   /* ten seconds after it is ready, once: the tasks' deepest stack so far (sizing; 8 KiB each) */
-        static uint8_t said;
+    {   /* ten seconds after it is ready: the tasks' deepest stack so far (sizing; 8 KiB each), then again each
+         * time one goes deeper (a second at most between looks) */
+        static uint8_t said, deep[4];
+        static uint32_t looked;
         extern int shim_stack_depth(int task);
-        if (ble_state == BLE_READY && !said && shim_ms() - radio_t0 > 10000u) {
+        int k, more = 0;
+        if (ble_state == BLE_READY && said && shim_ms() - looked > 1000u) {
+            looked = shim_ms();
+            for (k = 1; k <= 3; k++)
+                if (shim_stack_depth(k) > deep[k])
+                    more = 1;
+        }
+        if (ble_state == BLE_READY && (more || (!said && shim_ms() - radio_t0 > 10000u))) {
             char b[40] = "stacks ", *q = b + 7;
-            int k;
             said = 1;
+            looked = shim_ms();
+            for (k = 1; k <= 3; k++)
+                deep[k] = (uint8_t)shim_stack_depth(k);
             for (k = 1; k <= 3; k++) {
-                q = put_dec(q, (uint32_t)shim_stack_depth(k) * 256u);
+                q = put_dec(q, (uint32_t)deep[k] * 256u);
                 *q++ = k < 3 ? ' ' : 0;
             }
             q[-1] = 0;
