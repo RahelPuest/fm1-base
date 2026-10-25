@@ -35,6 +35,8 @@ SECTIONS
                   . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .;
                   _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
+    /* .lowram: zeroed data in what .ram_text leaves of RAMTEXT (plat.h PLAT_LOWRAM: buffers only the CPU touches) */
+    .lowram (NOLOAD) : { . = ALIGN(4); _lram_start = .; *(.lowram*) . = ALIGN(4); _lram_end = .; } > RAMTEXT
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) *(.*_data) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
     .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) *(.*_bss) *(.bd_base) . = ALIGN(4); _bss_end = .; } > RAM

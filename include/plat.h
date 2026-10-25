@@ -13,8 +13,10 @@
 /* big zero-initialised buffers go in the .pool RAM region on the device */
 #ifdef PLAT_HOST
 #define PLAT_POOL
+#define PLAT_LOWRAM
 #else
 #define PLAT_POOL __attribute__((section(".pool")))
+#define PLAT_LOWRAM __attribute__((section(".lowram")))   /* zeroed RAM after .ram_text (buffers only the CPU touches) */
 #endif
 
 /* panel controls, by printed label (Felucca's panel.c map turns these into matrix ids; Felucca
