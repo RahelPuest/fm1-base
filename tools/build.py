@@ -340,7 +340,6 @@ BLE_TRIM = {
     ("btctrler.a", "bredr_link.c.o"): "int link_conn_tx_bulk_avaiable(void) { return 0; }",     # classic's ACL transmit
     ("btstack.a", "ancs_client.c.o"): "void ancs_client_btstack_init_for_check(void) {}",       # Apple's notifications
     ("btctrler.a", "ll_scan.c.o"): "int ll_scan_open(void) { return -1; }",                     # the central's scan
-    ("btctrler.a", "link_layer.c.o"): "int ll_create_conn_link(void) { return -1; }",           # and its connecting
     ("btstack.a", "gatt_client.c.o"):                                       # the GATT client's reads and writes (the
         "int gatt_client_read_value_of_characteristic_using_value_handle(void) { return 1; }\n"   # server's
         "int gatt_client_read_long_value_of_characteristic_using_value_handle(void) { return 1; }\n"  # notifications
@@ -348,8 +347,10 @@ BLE_TRIM = {
         "int gatt_client_write_value_of_characteristic_without_response(void) { return 1; }\n"
         "int gatt_client_discover_characteristic_descriptors_by_handle(void) { return 1; }",
 }
-# (not avctp_user.c.o's classic connection bookkeeping, as Melodee's spike has it: stubbed, the controller never says
-# it is ready on an FM-1: "still starting after 3 s", 15 s and no Bluetooth; found by bisecting the stubs, 2026-10-25)
+# Not, as Melodee's spike had them (2026-10-25, on an FM-1): avctp_user.c.o's classic connection bookkeeping
+# (stubbed, the controller never says it is ready: "still starting after 3 s", no Bluetooth), nor link_layer.c.o's
+# ll_create_conn_link (a peripheral makes its link with it too: stubbed, a Mac's connecting crashed the FM-1 in
+# ble_hw_tx, r0 = 0, from ble_event_irq_handler)
 BLE_CONFIG = {"apps/common/config/log_config/lib_btctrler_config.c": [
     (r"(const int config_btctler_le_roles\s*=\s*)\([^)]*\)", r"\1(LE_ADV | LE_SLAVE)"),
     (r"(const int config_le_gatt_client_num\s*=\s*)[^;]+", r"\g<1>0"),
